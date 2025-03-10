@@ -16,11 +16,11 @@ MORSE_CODE_DICT = {
     '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..',
     '9': '----.', ' ': '/'
 }
-
+#for mac com port is /dev/tty.usbserial-130
 # Open serial port at 110 baud
 try:
     debug_log("Opening serial port COM5 at 110 baud...")
-    ser = serial.Serial('COM6', baudrate=110, timeout=1)
+    ser = serial.Serial('/dev/tty.usbserial-130', baudrate=110, timeout=1)
     debug_log("Serial port opened successfully.")
 except serial.SerialException:
     print("Error: Could not open serial port.")
