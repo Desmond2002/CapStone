@@ -21,63 +21,59 @@ DOT_FREQUENCY = 800  # Frequency for dots (Hz)
 DASH_FREQUENCY = 600  # Frequency for dashes (Hz)
 DOT_DURATION = 0.1  # Dot duration (seconds)
 DASH_DURATION = 0.3  # Dash duration (seconds)
-THRESHOLD = 0.05  # Increase threshold to reduce noise interference
+WORD_GAP = 0.7  # Time threshold for word spacing
+THRESHOLD = 0.02  # Dynamic threshold (may need tuning)
 
-# Band-pass filter to isolate specific Morse frequencies
-def bandpass_filter(audio_data, lowcut, highcut, sample_rate=44100):
-    nyquist = 0.5 * sample_rate
-    low = lowcut / nyquist
-    high = highcut / nyquist
-    b, a = signal.butter(4, [low, high], btype='band')
-    return signal.lfilter(b, a, audio_data)
+# Fast Fourier Transform (FFT) function to detect frequencies
+def detect_frequency(audio_data, sample_rate=44100):
+    fft_result = np.fft.fft(audio_data)
+    frequencies = np.fft.fftfreq(len(fft_result), d=1/sample_rate)
 
-# Detect signal transitions and classify dots/dashes
+    # Get the peak frequency
+    magnitude = np.abs(fft_result)
+    peak_index = np.argmax(magnitude)
+    peak_frequency = abs(frequencies[peak_index])
+
+    return peak_frequency
+
+# Detect Morse signals (dots and dashes)
 def detect_morse_signal(audio_data, sample_rate=44100):
-    # Apply band-pass filters for dot and dash frequencies
-    filtered_dots = bandpass_filter(audio_data, DOT_FREQUENCY - 50, DOT_FREQUENCY + 50)
-    filtered_dashes = bandpass_filter(audio_data, DASH_FREQUENCY - 50, DASH_FREQUENCY + 50)
+    morse_code = []
+    previous_end = 0
 
     # Convert amplitude to binary (1 = signal, 0 = silence)
-    dot_signal = np.where(filtered_dots > THRESHOLD, 1, 0)
-    dash_signal = np.where(filtered_dashes > THRESHOLD, 1, 0)
-
-    # Combine dot and dash signals
-    binary_signal = np.maximum(dot_signal, dash_signal)
+    binary_signal = np.where(audio_data > THRESHOLD, 1, 0)
 
     # Detect signal transitions
     transitions = np.diff(binary_signal)
     start_indices = np.where(transitions == 1)[0]
     end_indices = np.where(transitions == -1)[0]
 
-    # Ensure start and end indices are aligned
+    # Ensure start and end indices align
     if len(end_indices) > 0 and start_indices[0] > end_indices[0]:
         end_indices = end_indices[1:]  # Drop first end if it has no start
     if len(start_indices) > len(end_indices):
         start_indices = start_indices[:-1]  # Drop last start if it has no end
 
-    # Convert tone durations to Morse symbols
-    morse_code = []
-    previous_end = 0
-
     for start, end in zip(start_indices, end_indices):
         duration = (end - start) / sample_rate
         gap = (start - previous_end) / sample_rate
 
-        # Normalize durations
-        duration_rounded = round(duration, 2)
-        gap_rounded = round(gap, 2)
+        # Use FFT to identify frequency
+        segment = audio_data[start:end]
+        detected_frequency = detect_frequency(segment, sample_rate)
 
-        # Detect gaps between letters and words
-        if gap_rounded > 0.5:  # Adjusted threshold for word gaps
-            morse_code.append("   ")  # Word gap
-        elif gap_rounded > 0.2:
-            morse_code.append(" ")  # Letter gap
+        # Identify signal as dot or dash based on frequency & duration
+        if 750 < detected_frequency < 850 and duration <= 0.2:
+            morse_code.append(".")  # Dot
+        elif 550 < detected_frequency < 650 and duration > 0.2:
+            morse_code.append("-")  # Dash
         
-        # Determine if it's a dot or dash based on frequency and duration
-        if duration_rounded < 0.2:
-            morse_code.append(".")  # Dot detected
-        else:
-            morse_code.append("-")  # Dash detected
+        # Detect spacing
+        if gap > WORD_GAP:
+            morse_code.append("   ")  # Word gap
+        elif gap > DOT_DURATION * 1.5:
+            morse_code.append(" ")  # Letter gap
 
         previous_end = end
 
