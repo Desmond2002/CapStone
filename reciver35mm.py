@@ -1,10 +1,11 @@
-import numpy as np
-import sounddevice as sd
-import scipy.signal as signal
+import serial
 import time
 
+# Serial Configuration
+ser = serial.Serial('/dev/tty.usbserial-130', baudrate=9600, timeout=1)
+
 # Morse Code Dictionary (Reverse Lookup)
-MORSE_CODE_DICT_REV = {v: k for k, v in {
+MORSE_CODE_REVERSE = {v: k for k, v in {
     'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.',
     'F': '..-.', 'G': '--.', 'H': '....', 'I': '..', 'J': '.---',
     'K': '-.-', 'L': '.-..', 'M': '--', 'N': '-.', 'O': '---',
@@ -12,89 +13,60 @@ MORSE_CODE_DICT_REV = {v: k for k, v in {
     'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 'Y': '-.--',
     'Z': '--..', '0': '-----', '1': '.----', '2': '..---', '3': '...--',
     '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..',
-    '9': '----.', ' ': ' '
+    '9': '----.', ' ': '/'
 }.items()}
 
-# Constants
-SAMPLE_RATE = 44100  # Standard audio sample rate
-MORSE_FREQUENCY = 1000  # Morse tone frequency (Hz)
-DOT_DURATION = 0.1  # Dot duration (seconds)
-THRESHOLD = 0.02  # Amplitude threshold for detecting signals
+# Timing Thresholds
+DOT_THRESHOLD = 0.3     # Below this = dot
+DASH_THRESHOLD = 0.6    # Above dot but below this = dash
+LETTER_GAP_THRESHOLD = 0.7
+WORD_GAP_THRESHOLD = 1.2
 
-# Band-pass filter to isolate Morse frequency (1000 Hz)
-def bandpass_filter(audio_data, lowcut=900, highcut=1100, sample_rate=44100):
-    nyquist = 0.5 * sample_rate
-    low = lowcut / nyquist
-    high = highcut / nyquist
-    b, a = signal.butter(4, [low, high], btype='band')
-    return signal.lfilter(b, a, audio_data)
+def decode_morse(morse_code):
+    words = morse_code.split(" / ")
+    return ' '.join(''.join(MORSE_CODE_REVERSE.get(letter, '?') for letter in word.split()) for word in words)
 
-# Detect signal transitions and classify dots/dashes
-def detect_morse_signal(audio_data, sample_rate=44100):
-    filtered_audio = bandpass_filter(audio_data)
+# Function to receive Morse Code over COM
+def receive_message():
+    print("Listening for Morse code over COM...")
+    morse_code = ""
+    listening = False
+    start_time = None
+    last_signal_time = None
 
-    # Convert amplitude to binary (1 = signal, 0 = silence)
-    binary_signal = np.where(filtered_audio > THRESHOLD, 1, 0)
+    while True:
+        data = ser.read().decode().strip()
 
-    # Detect signal transitions
-    transitions = np.diff(binary_signal)
-    start_indices = np.where(transitions == 1)[0]
-    end_indices = np.where(transitions == -1)[0]
+        if data == "1":  # Transmission started
+            start_time = time.time()
+            while ser.read().decode().strip() == "1":
+                pass  # Wait for transmission to end
+            duration = time.time() - start_time
+            
+            if duration < DOT_THRESHOLD:
+                morse_code += "."
+            elif duration < DASH_THRESHOLD:
+                morse_code += "-"
 
-    # Ensure start and end indices are aligned
-    if len(end_indices) > 0 and start_indices[0] > end_indices[0]:
-        end_indices = end_indices[1:]  # Drop first end if it has no start
-    if len(start_indices) > len(end_indices):
-        start_indices = start_indices[:-1]  # Drop last start if it has no end
+        elif data == "0":  # Transmission stopped
+            start_time = time.time()
+            while ser.read().decode().strip() == "0":
+                pass  # Wait for next transmission
+            duration = time.time() - start_time
 
-    # Convert tone durations to Morse symbols
-    morse_code = []
-    previous_end = 0
+            if duration > WORD_GAP_THRESHOLD:
+                morse_code += " / "
+            elif duration > LETTER_GAP_THRESHOLD:
+                morse_code += " "
 
-    for start, end in zip(start_indices, end_indices):
-        duration = (end - start) / sample_rate
-        gap = (start - previous_end) / sample_rate
+        print(f"Current Morse Code: {morse_code}")
 
-        if gap > DOT_DURATION * 3:
-            morse_code.append("   ")  # Word gap
-        elif gap > DOT_DURATION * 1.5:
-            morse_code.append(" ")  # Letter gap
-        
-        if duration < DOT_DURATION * 1.5:
-            morse_code.append(".")
-        else:
-            morse_code.append("-")
+        # Stop listening when user interrupts
+        if len(morse_code) > 50:  
+            break
 
-        previous_end = end
+    decoded_message = decode_morse(morse_code)
+    print(f"Final Decoded Message: {decoded_message}")
 
-    return "".join(morse_code)
-
-# Decode Morse Code into text
-def morse_to_text(morse_code):
-    words = morse_code.split("   ")  # Word gap = three spaces
-    decoded_text = []
-
-    for word in words:
-        letters = word.split()  # Letter gap = one space
-        decoded_word = "".join(MORSE_CODE_DICT_REV.get(letter, "?") for letter in letters)
-        decoded_text.append(decoded_word)
-
-    return " ".join(decoded_text)
-
-# Record audio and decode Morse code
-def receive_morse(duration=10):
-    print(f"Listening for Morse Code for {duration} seconds...")
-    
-    # Record from microphone
-    recording = sd.rec(int(duration * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype='float32')
-    sd.wait()  # Wait for recording to complete
-
-    # Process and decode Morse code
-    morse_code = detect_morse_signal(recording.flatten())
-    print(f"Detected Morse Code: {morse_code}")
-
-    decoded_text = morse_to_text(morse_code)
-    print(f"Decoded Message: {decoded_text}")
-
-# Start Morse code receiver
-receive_morse(duration=10)
+if __name__ == "__main__":
+    receive_message()
