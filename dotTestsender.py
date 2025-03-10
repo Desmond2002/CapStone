@@ -8,8 +8,8 @@ def debug_log(message):
 # Serial Port Configuration
 PORT = "/dev/tty.usbserial-130"  # Change for Windows (e.g., "COM5")
 BAUDRATE = 110
-DOT_DURATION = 0.2  # Adjust for timing consistency (200ms dot)
-GAP_DURATION = 0.2  # Gap between dots
+DOT_DURATION = 0.15  # Corrected to 150ms (0.15 seconds)
+GAP_DURATION = 0.15  # Ensuring consistent gap duration
 
 # Open Serial Port
 try:
@@ -26,11 +26,11 @@ def send_dot():
     
     ser.write(b'1')  # Send binary '1' as a dot
     ser.flush()
-    time.sleep(DOT_DURATION)  # Duration of dot
+    time.sleep(DOT_DURATION)  # Duration of dot (0.15s)
     
     ser.write(b'0')  # Send binary '0' to indicate silence
     ser.flush()
-    time.sleep(GAP_DURATION)  # Wait before sending the next dot
+    time.sleep(GAP_DURATION)  # Gap before next dot (0.15s)
 
 if __name__ == "__main__":
     try:
