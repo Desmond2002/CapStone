@@ -1,6 +1,5 @@
 import serial
 import time
-import numpy as np
 
 # Debugging function
 def debug_log(message):
@@ -18,7 +17,7 @@ MORSE_CODE_DICT = {
     '9': '----.', ' ': '/'
 }
 
-# Serial Port Configuration (For Mac: /dev/tty.usbserial-130)
+# Serial Port Configuration
 try:
     debug_log("Opening serial port at 110 baud...")
     ser = serial.Serial('/dev/tty.usbserial-130', baudrate=110, timeout=1)
@@ -34,37 +33,56 @@ DASH_FREQUENCY = 600  # Frequency for dashes
 # Convert text to Morse Code
 def text_to_morse(text):
     debug_log(f"Converting text to Morse Code: {text}")
-    morse_code = ' '.join(MORSE_CODE_DICT[char] for char in text.upper() if char in MORSE_CODE_DICT)
-    debug_log(f"Morse Code: {morse_code}")
-    return morse_code
+    morse_code = ''
+    for char in text.upper():
+        if char in MORSE_CODE_DICT:
+            morse_code += MORSE_CODE_DICT[char] + ' '
+    debug_log(f"Morse Code: {morse_code.strip()}")
+    return morse_code.strip()
 
 # Function to send Morse Code message over serial with frequencies
 def send_message(text):
     debug_log("Starting message transmission...")
     morse_code = text_to_morse(text)
+    debug_log(f"Sending Morse Code: {morse_code}")
 
-    for char in morse_code:
-        if char == '.':
-            send_signal(DOT_FREQUENCY)  # Dot
-        elif char == '-':
-            send_signal(DASH_FREQUENCY)  # Dash
-        elif char == ' ':
+    for symbol in morse_code:
+        if symbol == '.':
+            debug_log("Sending DOT")
+            send_signal(DOT_FREQUENCY, 0.2)  # Dot with duration
+        elif symbol == '-':
+            debug_log("Sending DASH")
+            send_signal(DASH_FREQUENCY, 0.4)  # Dash with duration
+        elif symbol == ' ':
+            debug_log("Inter-letter space")
             time.sleep(0.3)  # Inter-letter space
-        elif char == '/':
+        elif symbol == '/':
+            debug_log("Inter-word space")
             time.sleep(0.7)  # Inter-word space
-        time.sleep(0.1)  # Intra-symbol gap
+        
+        # Only add symbol gap after dots and dashes
+        if symbol in ['.', '-']:
+            debug_log("Symbol gap")
+            time.sleep(0.1)  # Gap between symbols
 
     debug_log("Message transmission complete.")
 
-# Function to send a specific frequency signal
-def send_signal(frequency):
-    debug_log(f"Sending signal: Frequency={frequency}Hz")
-
+# Function to send a specific frequency signal with duration
+def send_signal(frequency, duration):
+    debug_log(f"Sending signal: Frequency={frequency}Hz, Duration={duration}s")
+    
     # Send frequency data via serial
-    ser.write(f"SIGNAL {frequency}\n".encode())  
+    ser.write(f"SIGNAL {frequency}\r\n".encode())
     ser.flush()
     
-    time.sleep(0.1)  # Hold signal for 100ms
+    # Hold for specified duration
+    time.sleep(duration)
+    
+    # Stop transmission
+    debug_log("Sending STOP signal")
+    ser.write(f"SIGNAL 0\r\n".encode())
+    ser.flush()
+    time.sleep(0.1)  # Ensure the stop command is processed
 
 if __name__ == "__main__":
     try:
@@ -72,6 +90,11 @@ if __name__ == "__main__":
         send_message("A")  # Send Morse code for "A"
         debug_log("Program completed successfully.")
     finally:
+        debug_log("Stopping any ongoing transmissions before closing...")
+        ser.write(f"SIGNAL 0\r\n".encode())
+        ser.flush()
+        time.sleep(0.5)
+        
         debug_log("Closing serial port...")
         ser.close()
         debug_log("Serial port closed.")
