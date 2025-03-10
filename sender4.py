@@ -79,7 +79,7 @@ def send_signal(frequency, duration):
 if __name__ == "__main__":
     try:
         debug_log("Program started.")
-        send_message("HELLO")  # Test message
+        send_message("A")  # Test message
         debug_log("Program completed successfully.")
     finally:
         debug_log("Closing serial port...")

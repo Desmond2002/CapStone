@@ -21,7 +21,7 @@ DOT_FREQUENCY = 800  # Frequency for dots (Hz)
 DASH_FREQUENCY = 600  # Frequency for dashes (Hz)
 DOT_DURATION = 0.1  # Dot duration (seconds)
 DASH_DURATION = 0.3  # Dash duration (seconds)
-THRESHOLD = 0.02  # Amplitude threshold for detecting signals
+THRESHOLD = 0.05  # Increase threshold to reduce noise interference
 
 # Band-pass filter to isolate specific Morse frequencies
 def bandpass_filter(audio_data, lowcut, highcut, sample_rate=44100):
@@ -63,14 +63,18 @@ def detect_morse_signal(audio_data, sample_rate=44100):
         duration = (end - start) / sample_rate
         gap = (start - previous_end) / sample_rate
 
+        # Normalize durations
+        duration_rounded = round(duration, 2)
+        gap_rounded = round(gap, 2)
+
         # Detect gaps between letters and words
-        if gap > DASH_DURATION * 2:
+        if gap_rounded > 0.5:  # Adjusted threshold for word gaps
             morse_code.append("   ")  # Word gap
-        elif gap > DOT_DURATION * 1.5:
+        elif gap_rounded > 0.2:
             morse_code.append(" ")  # Letter gap
         
         # Determine if it's a dot or dash based on frequency and duration
-        if np.mean(filtered_dots[start:end]) > np.mean(filtered_dashes[start:end]):
+        if duration_rounded < 0.2:
             morse_code.append(".")  # Dot detected
         else:
             morse_code.append("-")  # Dash detected
