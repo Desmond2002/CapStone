@@ -2,7 +2,7 @@ import serial
 import time
 
 # Serial Configuration
-ser = serial.Serial('COM6', baudrate=9600, timeout=1)
+ser = serial.Serial('/dev/tty.usbserial-120', baudrate=9600, timeout=1)
 
 # Morse Code Dictionary (Reverse Lookup)
 MORSE_CODE_REVERSE = {v: k for k, v in {
