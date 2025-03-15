@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple AFSK Receiver - Improved filter and normalization
+Updated AFSK Receiver with adjusted thresholds and timing
 """
 
 import numpy as np
@@ -12,18 +12,17 @@ MARK_FREQ = 1200  # Hz (Binary 1)
 SPACE_FREQ = 2200  # Hz (Binary 0)
 BAUD_RATE = 300  # Baud rate
 SAMPLE_RATE = 44100  # Hz
-NOISE_THRESHOLD = 0.02  # Increased threshold
-MIN_SIGNAL_DURATION = 0.5  # Minimum duration (seconds) for valid signal
+NOISE_THRESHOLD = 0.015  # Slightly increased to reduce false detections
 CHUNK = 4410  # 0.1 seconds of audio at 44.1kHz
 
 p = pyaudio.PyAudio()
 
-def bandpass_filter(data, center_freq, bandwidth=50):
+def bandpass_filter(data, center_freq, bandwidth=70):
     """Apply a bandpass filter around the target frequency."""
     nyquist = 0.5 * SAMPLE_RATE
     low = (center_freq - bandwidth / 2) / nyquist
     high = (center_freq + bandwidth / 2) / nyquist
-    b, a = butter(6, [low, high], btype='band')
+    b, a = butter(3, [low, high], btype='band')
     return lfilter(b, a, data)
 
 def detect_signal(audio_buffer):
@@ -64,17 +63,16 @@ def binary_to_text(binary_data):
 
 def process_audio(data, audio_buffer, in_signal, signal_start_time):
     """Process incoming audio data for AFSK signals."""
-    normalized_data = data / np.max(np.abs(data))
-    if not in_signal and detect_signal(normalized_data):
+    if not in_signal and detect_signal(data):
         in_signal = True
         signal_start_time = time.time()
         audio_buffer = []
         print("Signal detected - receiving...")
     if in_signal:
-        audio_buffer.extend(normalized_data)
-        if not detect_signal(normalized_data):
+        audio_buffer.extend(data)
+        if not detect_signal(data):
             signal_duration = time.time() - signal_start_time
-            if signal_duration >= MIN_SIGNAL_DURATION:
+            if signal_duration >= 0.5:
                 print(f"Signal received: {signal_duration:.1f} seconds")
                 binary_data = decode_afsk(np.array(audio_buffer))
                 print(f"Binary data length: {len(binary_data)} bits")
