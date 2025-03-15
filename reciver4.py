@@ -1,166 +1,112 @@
-import pyaudio
+#!/usr/bin/env python3
+"""
+Simple AFSK Receiver - Improved filter and normalization
+"""
+
 import numpy as np
+import pyaudio
 import time
-from scipy.fftpack import fft
-import threading
+from scipy.signal import butter, lfilter
 
-# Morse Code dictionary (reversed for decoding)
-MORSE_TO_TEXT = {
-    '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E',
-    '..-.': 'F', '--.': 'G', '....': 'H', '..': 'I', '.---': 'J',
-    '-.-': 'K', '.-..': 'L', '--': 'M', '-.': 'N', '---': 'O',
-    '.--.': 'P', '--.-': 'Q', '.-.': 'R', '...': 'S', '-': 'T',
-    '..-': 'U', '...-': 'V', '.--': 'W', '-..-': 'X', '-.--': 'Y',
-    '--..': 'Z', '-----': '0', '.----': '1', '..---': '2', '...--': '3',
-    '....-': '4', '.....': '5', '-....': '6', '--...': '7', '---..': '8',
-    '----.': '9', '/': ' '
-}
+MARK_FREQ = 1200  # Hz (Binary 1)
+SPACE_FREQ = 2200  # Hz (Binary 0)
+BAUD_RATE = 300  # Baud rate
+SAMPLE_RATE = 44100  # Hz
+NOISE_THRESHOLD = 0.02  # Increased threshold
+MIN_SIGNAL_DURATION = 0.5  # Minimum duration (seconds) for valid signal
+CHUNK = 4410  # 0.1 seconds of audio at 44.1kHz
 
-# Configuration
-CHUNK = 1024  # Number of audio frames per buffer
-RATE = 44100  # Audio sampling rate
-DOT_FREQUENCY = 800  # Expected frequency for dots (Hz)
-DASH_FREQUENCY = 600  # Expected frequency for dashes (Hz)
-FREQUENCY_TOLERANCE = 50  # Tolerance range for frequency detection (Hz)
-AMPLITUDE_THRESHOLD = 0.01  # Minimum amplitude to detect a signal
-SILENCE_THRESHOLD = 0.7  # Time threshold to detect end of a character (seconds)
-LETTER_THRESHOLD = 1.5  # Time threshold to detect end of a word (seconds)
+p = pyaudio.PyAudio()
 
-# State variables
-current_morse = ""
-current_word = ""
-decoded_text = ""
-last_signal_time = 0
-is_receiving = True
+def bandpass_filter(data, center_freq, bandwidth=50):
+    """Apply a bandpass filter around the target frequency."""
+    nyquist = 0.5 * SAMPLE_RATE
+    low = (center_freq - bandwidth / 2) / nyquist
+    high = (center_freq + bandwidth / 2) / nyquist
+    b, a = butter(6, [low, high], btype='band')
+    return lfilter(b, a, data)
 
-def debug_log(message):
-    print(f"[DEBUG] {message}")
+def detect_signal(audio_buffer):
+    """Detect if a valid signal is present in the audio buffer."""
+    mark_filtered = bandpass_filter(audio_buffer, MARK_FREQ)
+    space_filtered = bandpass_filter(audio_buffer, SPACE_FREQ)
+    mark_energy = np.mean(mark_filtered ** 2)
+    space_energy = np.mean(space_filtered ** 2)
+    total_energy = mark_energy + space_energy
+    return total_energy > NOISE_THRESHOLD
 
-def detect_frequency(audio_data, rate=RATE):
-    """Detect the dominant frequency in the audio data"""
-    if np.max(np.abs(audio_data)) < AMPLITUDE_THRESHOLD:
-        return 0  # No significant audio detected
-    
-    # Apply windowing
-    windowed_data = audio_data * np.hamming(len(audio_data))
-    
-    # Compute FFT
-    fft_data = fft(windowed_data)
-    fft_data = np.abs(fft_data[:len(fft_data)//2])
-    
-    # Find the peak frequency
-    peak_index = np.argmax(fft_data)
-    peak_freq = peak_index * rate / len(audio_data)
-    
-    # Get the amplitude of the peak
-    peak_amplitude = np.max(fft_data) / len(audio_data)
-    
-    debug_log(f"Peak frequency: {peak_freq:.1f} Hz, Amplitude: {peak_amplitude:.6f}")
-    
-    # Return the frequency if it's above the amplitude threshold
-    if peak_amplitude > AMPLITUDE_THRESHOLD:
-        return peak_freq
-    return 0
+def decode_afsk(audio_buffer):
+    """Decode AFSK signal to binary data."""
+    samples_per_bit = int(SAMPLE_RATE / BAUD_RATE)
+    mark_filtered = bandpass_filter(audio_buffer, MARK_FREQ)
+    space_filtered = bandpass_filter(audio_buffer, SPACE_FREQ)
+    num_bits = len(audio_buffer) // samples_per_bit
+    binary_data = ""
+    for i in range(num_bits):
+        start = i * samples_per_bit
+        end = start + samples_per_bit
+        mark_energy = np.sum(mark_filtered[start:end] ** 2)
+        space_energy = np.sum(space_filtered[start:end] ** 2)
+        binary_data += "1" if mark_energy > space_energy else "0"
+    return binary_data
 
-def interpret_morse_symbol(frequency):
-    """Convert a detected frequency to a Morse code symbol"""
-    if abs(frequency - DOT_FREQUENCY) <= FREQUENCY_TOLERANCE:
-        return "."
-    elif abs(frequency - DASH_FREQUENCY) <= FREQUENCY_TOLERANCE:
-        return "-"
-    return None
+def binary_to_text(binary_data):
+    """Convert binary string to text."""
+    binary_data = binary_data[:len(binary_data) - (len(binary_data) % 8)]
+    text = ""
+    for i in range(0, len(binary_data), 8):
+        byte = binary_data[i:i+8]
+        try:
+            text += chr(int(byte, 2))
+        except ValueError:
+            text += "?"
+    return text
 
-def decode_morse():
-    """Decode the current Morse code sequence"""
-    global current_morse, current_word, decoded_text
-    
-    if current_morse in MORSE_TO_TEXT:
-        letter = MORSE_TO_TEXT[current_morse]
-        current_word += letter
-        debug_log(f"Decoded: {current_morse} -> {letter}")
-    else:
-        if current_morse:
-            debug_log(f"Unknown Morse sequence: {current_morse}")
-    
-    current_morse = ""
+def process_audio(data, audio_buffer, in_signal, signal_start_time):
+    """Process incoming audio data for AFSK signals."""
+    normalized_data = data / np.max(np.abs(data))
+    if not in_signal and detect_signal(normalized_data):
+        in_signal = True
+        signal_start_time = time.time()
+        audio_buffer = []
+        print("Signal detected - receiving...")
+    if in_signal:
+        audio_buffer.extend(normalized_data)
+        if not detect_signal(normalized_data):
+            signal_duration = time.time() - signal_start_time
+            if signal_duration >= MIN_SIGNAL_DURATION:
+                print(f"Signal received: {signal_duration:.1f} seconds")
+                binary_data = decode_afsk(np.array(audio_buffer))
+                print(f"Binary data length: {len(binary_data)} bits")
+                text = binary_to_text(binary_data)
+                print(f"Decoded message: {text}")
+                print("-" * 40)
+            in_signal = False
+            audio_buffer = []
+    return audio_buffer, in_signal, signal_start_time
 
-def check_timing():
-    """Check for letter and word boundaries based on timing"""
-    global current_morse, current_word, decoded_text, last_signal_time
-    
-    while is_receiving:
-        current_time = time.time()
-        
-        # If there's an ongoing morse sequence and it's been silent for SILENCE_THRESHOLD
-        if current_morse and (current_time - last_signal_time) > SILENCE_THRESHOLD:
-            debug_log(f"Letter break detected. Decoding: {current_morse}")
-            decode_morse()
-        
-        # If there's an ongoing word and it's been silent for LETTER_THRESHOLD
-        if current_word and (current_time - last_signal_time) > LETTER_THRESHOLD:
-            debug_log(f"Word complete: {current_word}")
-            decoded_text += current_word + " "
-            print(f"Current message: {decoded_text}")
-            current_word = ""
-        
-        time.sleep(0.1)  # Check timing every 100ms
-
-def audio_callback(in_data, frame_count, time_info, status):
-    """Callback function for processing audio data"""
-    global current_morse, last_signal_time
-    
-    audio_data = np.frombuffer(in_data, dtype=np.float32)
-    frequency = detect_frequency(audio_data)
-    
-    if frequency > 0:
-        symbol = interpret_morse_symbol(frequency)
-        if symbol:
-            current_morse += symbol
-            last_signal_time = time.time()
-            debug_log(f"Detected symbol: {symbol}, Current sequence: {current_morse}")
-    
-    return (in_data, pyaudio.paContinue)
-
-def main():
-    """Main function to set up and run the Morse code receiver"""
-    global is_receiving
-    
-    print("Morse Code Receiver Starting...")
-    print(f"Listening for dots at {DOT_FREQUENCY}Hz and dashes at {DASH_FREQUENCY}Hz")
-    
-    # Start the timing check thread
-    timing_thread = threading.Thread(target=check_timing)
-    timing_thread.daemon = True
-    timing_thread.start()
-    
-    # Initialize PyAudio
-    p = pyaudio.PyAudio()
-    
+def receive_audio():
+    """Main function to receive and process audio."""
+    audio_buffer = []
+    in_signal = False
+    signal_start_time = 0
+    stream = p.open(format=pyaudio.paInt16,
+                    channels=1,
+                    rate=SAMPLE_RATE,
+                    input=True,
+                    frames_per_buffer=CHUNK)
+    print("Listening for AFSK signal...")
+    print(f"MARK: {MARK_FREQ} Hz, SPACE: {SPACE_FREQ} Hz, RATE: {BAUD_RATE} baud")
     try:
-        # Open audio stream
-        stream = p.open(format=pyaudio.paFloat32,
-                        channels=1,
-                        rate=RATE,
-                        input=True,
-                        frames_per_buffer=CHUNK,
-                        stream_callback=audio_callback)
-        
-        print("Listening... Press Ctrl+C to stop.")
-        stream.start_stream()
-        
-        # Keep running until interrupted
-        while stream.is_active():
-            time.sleep(0.1)
-    
+        while True:
+            data = np.frombuffer(stream.read(CHUNK), dtype=np.int16).astype(np.float32) / 32768.0
+            audio_buffer, in_signal, signal_start_time = process_audio(data, audio_buffer, in_signal, signal_start_time)
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
-        is_receiving = False
-        if 'stream' in locals():
-            stream.stop_stream()
-            stream.close()
+        stream.stop_stream()
+        stream.close()
         p.terminate()
-        print(f"Final decoded message: {decoded_text}")
 
 if __name__ == "__main__":
-    main()
+    receive_audio()
