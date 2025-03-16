@@ -33,10 +33,6 @@ def generate_tone(duration):
 
 
 def play_morse(morse_code):
-    # Start with three dots followed by a word space
-    primer = '... / '
-    morse_code = primer + morse_code
-
     for symbol in morse_code:
         if symbol == '.':
             tone = generate_tone(dot_duration)
@@ -53,7 +49,6 @@ def play_morse(morse_code):
         elif symbol == '/':
             time.sleep(dot_duration * 7)
         time.sleep(dot_duration)
-
 
 if __name__ == "__main__":
     message = input("Enter the message to send in Morse: ")
