@@ -29,6 +29,7 @@ def listen_and_decode():
     decoding_started = False
     silence_start = None
     signal_start = None
+
     print("Listening for Morse messages...")
 
     while True:
@@ -46,7 +47,7 @@ def listen_and_decode():
                 duration = current_time - signal_start
                 signal_start = None
 
-                if duration >= 0.02:  # Filter noise
+                if duration >= 0.02:
                     if duration < dot_duration * 1.5:
                         symbols += '.'
                     else:
@@ -79,13 +80,7 @@ def listen_and_decode():
         if audio_level > threshold:
             if signal_start is None:
                 signal_start = current_time
-                if silence_start and not decoding_started:
-                    silence_duration = current_time - silence_start
-                    if silence_duration >= dot_duration * 7:
-                        decoding_started = True
-                        symbols = ''
-                        print("\n--- Decoding started ---")
-            silence_start = None
+                silence_start = None
         else:
             if silence_start is None:
                 silence_start = current_time

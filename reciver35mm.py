@@ -1,72 +1,88 @@
-import serial
+import numpy as np
+import sounddevice as sd
+import queue
 import time
 
-# Serial Configuration
-ser = serial.Serial('/dev/tty.usbserial-120', baudrate=9600, timeout=1)
+MORSE_CODE_REVERSED = {
+    '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E',
+    '..-.': 'F', '--.': 'G', '....': 'H', '..': 'I', '.---': 'J',
+    '-.-': 'K', '.-..': 'L', '--': 'M', '-.': 'N', '---': 'O',
+    '.--.': 'P', '--.-': 'Q', '.-.': 'R', '...': 'S', '-': 'T',
+    '..-': 'U', '...-': 'V', '.--': 'W', '-..-': 'X', '-.--': 'Y',
+    '--..': 'Z', '-----': '0', '.----': '1', '..---': '2',
+    '...--': '3', '....-': '4', '.....': '5', '-....': '6',
+    '--...': '7', '---..': '8', '----.': '9', '/': ' '
+}
 
-# Morse Code Dictionary (Reverse Lookup)
-MORSE_CODE_REVERSE = {v: k for k, v in {
-    'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.',
-    'F': '..-.', 'G': '--.', 'H': '....', 'I': '..', 'J': '.---',
-    'K': '-.-', 'L': '.-..', 'M': '--', 'N': '-.', 'O': '---',
-    'P': '.--.', 'Q': '--.-', 'R': '.-.', 'S': '...', 'T': '-',
-    'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 'Y': '-.--',
-    'Z': '--..', '0': '-----', '1': '.----', '2': '..---', '3': '...--',
-    '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..',
-    '9': '----.', ' ': '/'
-}.items()}
+samplerate = 44100
+threshold = 0.02
+dot_duration = 0.1
+q = queue.Queue()
 
-# Timing Thresholds
-DOT_THRESHOLD = 0.3     # Below this = dot
-DASH_THRESHOLD = 0.6    # Above dot but below this = dash
-LETTER_GAP_THRESHOLD = 0.7
-WORD_GAP_THRESHOLD = 1.2
 
-def decode_morse(morse_code):
-    words = morse_code.split(" / ")
-    return ' '.join(''.join(MORSE_CODE_REVERSE.get(letter, '?') for letter in word.split()) for word in words)
+def audio_callback(indata, frames, t, status):
+    q.put(indata.copy())
 
-# Function to receive Morse Code over COM
-def receive_message():
-    print("Listening for Morse code over COM...")
-    morse_code = ""
-    listening = False
-    start_time = None
-    last_signal_time = None
+
+def listen_and_decode():
+    symbols = ''
+    decoding_started = False
+    in_signal = False
+    signal_start = None
+    silence_start = None
+    waiting_for_first_pause = True
+
+    print("Listening for Morse messages...")
 
     while True:
-        data = ser.read().decode().strip()
+        data = q.get().flatten()
+        amplitude = np.abs(data)
+        audio_level = np.mean(amplitude)
+        current_time = time.time()
 
-        if data == "1":  # Transmission started
-            start_time = time.time()
-            while ser.read().decode().strip() == "1":
-                pass  # Wait for transmission to end
-            duration = time.time() - start_time
-            
-            if duration < DOT_THRESHOLD:
-                morse_code += "."
-            elif duration < DASH_THRESHOLD:
-                morse_code += "-"
+        if audio_level > threshold:
+            if not in_signal:
+                in_signal = True
+                signal_start = current_time
 
-        elif data == "0":  # Transmission stopped
-            start_time = time.time()
-            while ser.read().decode().strip() == "0":
-                pass  # Wait for next transmission
-            duration = time.time() - start_time
+                if silence_start:
+                    silence_duration = current_time - silence_start
 
-            if duration > WORD_GAP_THRESHOLD:
-                morse_code += " / "
-            elif duration > LETTER_GAP_THRESHOLD:
-                morse_code += " "
+                    if waiting_for_first_pause and silence_duration >= dot_duration * 7:
+                        waiting_for_first_pause = False
+                        decoding_started = True
+                        symbols = ''
+                        print("\n--- Decoding started ---")
+                    elif not waiting_for_first_pause:
+                        if silence_duration >= dot_duration * 7:
+                            print(' ', end='', flush=True)  # Word spacing
+                        elif silence_duration >= dot_duration * 3:
+                            print('', end='', flush=True)  # Letter spacing
 
-        print(f"Current Morse Code: {morse_code}")
+            silence_start = None
 
-        # Stop listening when user interrupts
-        if len(morse_code) > 50:  
-            break
+        else:
+            if in_signal:
+                in_signal = False
+                signal_duration = current_time - signal_start
 
-    decoded_message = decode_morse(morse_code)
-    print(f"Final Decoded Message: {decoded_message}")
+                if signal_duration < dot_duration * 1.5:
+                    symbols += '.'
+                else:
+                    symbols += '-'
+
+                silence_start = current_time
+
+        # Decode letters correctly only after the first word pause
+        if silence_start and decoding_started:
+            silence_duration = current_time - silence_start
+            if silence_duration >= dot_duration * 3 and symbols:
+                char = MORSE_CODE_REVERSED.get(symbols, '')
+                symbols = ''
+                if char:
+                    print(char, end='', flush=True)
+
 
 if __name__ == "__main__":
-    receive_message()
+    with sd.InputStream(callback=audio_callback, channels=1, samplerate=samplerate, blocksize=int(samplerate * 0.02)):
+        listen_and_decode()
