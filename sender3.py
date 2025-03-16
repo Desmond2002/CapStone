@@ -1,91 +1,62 @@
 import numpy as np
 import pyaudio
-from scipy.signal import butter, lfilter
 
 # Constants
 MARK_FREQ = 1200  # Hz (bit '1')
 SPACE_FREQ = 2200  # Hz (bit '0')
-BAUD_RATE = 1200   # Baud rate (bits per second)
-SAMPLE_RATE = 44100  # Audio sampling rate
-BUFFER_SIZE = 1024  # Audio buffer
+BAUD_RATE = 1200  # Baud (bits per second)
+SAMPLE_RATE = 44100  # Hz
 
-# Bandpass Filter
-def butter_bandpass(lowcut, highcut, fs, order=5):
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = butter(order, [low, high], btype='band')
-    return b, a
+# NRZI Encoding
+def nrzi_encode(bitstream):
+    encoded = []
+    last_bit = 1  # Start with '1'
+    for bit in bitstream:
+        if bit == 0:
+            last_bit = 1 - last_bit  # Toggle
+        encoded.append(last_bit)
+    return encoded
 
-def bandpass_filter(data, lowcut, highcut, fs, order=5):
-    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
-    return lfilter(b, a, data)
+# Generate CPFSK Modulated Signal
+def afsk_modulate(bits):
+    samples_per_bit = SAMPLE_RATE // BAUD_RATE
+    time = np.arange(samples_per_bit) / SAMPLE_RATE
+    phase = 0  # Phase accumulator
+    signal = np.array([])
 
-# Quadrature Demodulation
-def quadrature_demod(samples):
-    time = np.arange(len(samples)) / SAMPLE_RATE
-    ref_mark = np.exp(-1j * 2 * np.pi * MARK_FREQ * time)
-    ref_space = np.exp(-1j * 2 * np.pi * SPACE_FREQ * time)
+    # Convert bits using NRZI
+    bits = nrzi_encode(bits)
 
-    demod_mark = np.abs(np.convolve(samples * ref_mark, np.ones(10)/10, mode='same'))
-    demod_space = np.abs(np.convolve(samples * ref_space, np.ones(10)/10, mode='same'))
+    for bit in bits:
+        freq = MARK_FREQ if bit == 1 else SPACE_FREQ
+        phase_step = 2 * np.pi * freq / SAMPLE_RATE
+        waveform = np.sin(phase + phase_step * np.arange(samples_per_bit))
+        phase += phase_step * samples_per_bit  # Maintain phase continuity
+        signal = np.concatenate((signal, waveform))
 
-    return demod_mark, demod_space
+    return signal
 
-# Decode AFSK Signal
-def afsk_demodulate(samples):
-    # Filter signal
-    mark_filtered = bandpass_filter(samples, 1000, 1300, SAMPLE_RATE)
-    space_filtered = bandpass_filter(samples, 2000, 2500, SAMPLE_RATE)
+# Convert Text to Bits
+def text_to_bits(text):
+    return [int(bit) for char in text for bit in f"{ord(char):08b}"]
 
-    # Quadrature detection
-    mark_strength, space_strength = quadrature_demod(mark_filtered)
-
-    # Decode bits
-    bitstream = []
-    for i in range(0, len(mark_strength), SAMPLE_RATE // BAUD_RATE):
-        if i + SAMPLE_RATE // BAUD_RATE > len(mark_strength):
-            break
-        mark_power = np.sum(mark_strength[i:i + SAMPLE_RATE // BAUD_RATE])
-        space_power = np.sum(space_strength[i:i + SAMPLE_RATE // BAUD_RATE])
-
-        bit = 1 if mark_power > space_power else 0
-        bitstream.append(bit)
-
-    return bitstream
-
-# Convert Bits to Text
-def bits_to_text(bits):
-    chars = [bits[i:i + 8] for i in range(0, len(bits), 8)]
-    return ''.join(chr(int(''.join(map(str, c)), 2)) for c in chars if len(c) == 8)
-
-# Receive AFSK Signal
-def record_signal():
+# Play Audio Signal
+def play_signal(signal):
     p = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paInt16,
+    stream = p.open(format=pyaudio.paFloat32,
                     channels=1,
                     rate=SAMPLE_RATE,
-                    input=True,
-                    frames_per_buffer=BUFFER_SIZE)
+                    output=True)
 
-    print("Listening...")
-    frames = []
-    try:
-        while True:
-            data = np.frombuffer(stream.read(BUFFER_SIZE), dtype=np.int16)
-            frames.extend(data)
-    except KeyboardInterrupt:
-        print("\nStopped recording.")
-    
+    stream.write(signal.astype(np.float32).tobytes())
     stream.stop_stream()
     stream.close()
     p.terminate()
-    
-    return np.array(frames, dtype=np.float32) / 32768.0  # Normalize
 
 if __name__ == "__main__":
-    audio_signal = record_signal()
-    bitstream = afsk_demodulate(audio_signal)
-    message = bits_to_text(bitstream)
+    message = input("Enter message to send: ")
+    bits = text_to_bits(message)
+    afsk_signal = afsk_modulate(bits)
 
-    print("\nReceived Message:", message)
+    print("Transmitting...")
+    play_signal(afsk_signal)
