@@ -1,46 +1,39 @@
 import numpy as np
+import scipy.signal as signal
 import pyaudio
 
 # Constants
-MARK_FREQ = 1200  # Hz (bit '1')
-SPACE_FREQ = 2200  # Hz (bit '0')
-BAUD_RATE = 1200  # Baud (bits per second)
+MARK_FREQ = 1200  # Hz
+SPACE_FREQ = 2200  # Hz
+BAUD_RATE = 1200  # bits per second
 SAMPLE_RATE = 44100  # Hz
+AMPLITUDE = 0.5  # Signal amplitude
 
-# NRZI Encoding
-def nrzi_encode(bitstream):
-    encoded = []
-    last_bit = 1  # Start with '1'
-    for bit in bitstream:
-        if bit == 0:
-            last_bit = 1 - last_bit  # Toggle
-        encoded.append(last_bit)
-    return encoded
-
-# Generate CPFSK Modulated Signal
-def afsk_modulate(bits):
+# AFSK Modulation using CPFSK
+def afsk_modulate(bitstream):
     samples_per_bit = SAMPLE_RATE // BAUD_RATE
     time = np.arange(samples_per_bit) / SAMPLE_RATE
+    signal_out = np.array([])
     phase = 0  # Phase accumulator
-    signal = np.array([])
 
-    # Convert bits using NRZI
-    bits = nrzi_encode(bits)
-
-    for bit in bits:
+    for bit in bitstream:
         freq = MARK_FREQ if bit == 1 else SPACE_FREQ
-        phase_step = 2 * np.pi * freq / SAMPLE_RATE
-        waveform = np.sin(phase + phase_step * np.arange(samples_per_bit))
-        phase += phase_step * samples_per_bit  # Maintain phase continuity
-        signal = np.concatenate((signal, waveform))
+        phase_increment = 2 * np.pi * freq / SAMPLE_RATE
+        bit_signal = AMPLITUDE * np.sin(phase + phase_increment * np.arange(samples_per_bit))
+        signal_out = np.concatenate((signal_out, bit_signal))
+        phase += phase_increment * samples_per_bit  # Maintain phase continuity
 
-    return signal
+    return signal_out
 
-# Convert Text to Bits
-def text_to_bits(text):
-    return [int(bit) for char in text for bit in f"{ord(char):08b}"]
+# Convert text to bitstream
+def text_to_bitstream(text):
+    bitstream = []
+    for char in text:
+        bits = bin(ord(char))[2:].zfill(8)  # Convert to 8-bit binary
+        bitstream.extend([int(bit) for bit in bits])
+    return bitstream
 
-# Play Audio Signal
+# Play audio signal through output
 def play_signal(signal):
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paFloat32,
@@ -53,10 +46,12 @@ def play_signal(signal):
     stream.close()
     p.terminate()
 
+# Main function for sending
 if __name__ == "__main__":
     message = input("Enter message to send: ")
-    bits = text_to_bits(message)
-    afsk_signal = afsk_modulate(bits)
+    bitstream = text_to_bitstream(message)
+    modulated_signal = afsk_modulate(bitstream)
 
     print("Transmitting...")
-    play_signal(afsk_signal)
+    play_signal(modulated_signal)
+    print("Transmission complete.")
