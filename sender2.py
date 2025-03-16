@@ -33,9 +33,9 @@ def generate_tone(duration):
 
 
 def play_morse(morse_code):
-    # Send three dots first to prime audio hardware
-    initial_signal = '... / '
-    morse_code = initial_signal + morse_code
+    # Start with three dots followed by a word space
+    primer = '... / '
+    morse_code = primer + morse_code
 
     for symbol in morse_code:
         if symbol == '.':
@@ -58,5 +58,7 @@ def play_morse(morse_code):
 if __name__ == "__main__":
     message = input("Enter the message to send in Morse: ")
     morse_code = text_to_morse(message)
+    primer = '... / '
+    morse_code = primer + morse_code
     print(f"Sending Morse: {morse_code}")
     play_morse(morse_code)
