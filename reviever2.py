@@ -1,5 +1,7 @@
 import numpy as np
 import sounddevice as sd
+import queue
+import threading
 from scipy.signal import find_peaks
 
 MORSE_CODE_REVERSED = { 
@@ -16,37 +18,50 @@ MORSE_CODE_REVERSED = {
 }
 
 samplerate = 44100
-threshold = 0.02  # Adjust based on your audio levels
+threshold = 0.02  # Adjust as needed based on your audio levels
+q = queue.Queue()
 
-duration = 20  # Listen for 20 seconds (adjustable)
+def audio_callback(indata, frames, time, status):
+    q.put(indata.copy())
 
-def decode_audio(recording, threshold):
-    amplitude = np.abs(recording)
-    peaks, _ = find_peaks(amplitude, height=threshold, distance=500)
-    times = peaks / samplerate
-    intervals = np.diff(times)
-    
-    morse = ''
+def decode_stream():
+    buffer = np.array([], dtype='float32')
     symbols = ''
-    for interval in intervals:
-        if interval < 0.15:
-            symbols += '.'
-        elif interval < 0.35:
-            symbols += '-'
-        elif interval < 1.0:
-            morse += MORSE_CODE_REVERSED.get(symbols, '') + ''
-            symbols = ''
-        else:
-            morse += MORSE_CODE_REVERSED.get(symbols, '') + ' '
-            symbols = ''
-    if symbols:
-        morse += MORSE_CODE_REVERSED.get(symbols, '')
-    return morse
+    morse_message = ''
+
+    while True:
+        data = q.get()
+        buffer = np.concatenate((buffer, data.flatten()))
+
+        if len(buffer) >= samplerate:
+            amplitude = np.abs(buffer)
+            peaks, _ = find_peaks(amplitude, height=threshold, distance=500)
+            times = peaks / samplerate
+
+            if len(times) > 1:
+                intervals = np.diff(times)
+                for interval in intervals:
+                    if interval < 0.15:
+                        symbols += '.'
+                    elif interval < 0.35:
+                        symbols += '-'
+                    elif interval < 1.0:
+                        morse_message += MORSE_CODE_REVERSED.get(symbols, '')
+                        symbols = ''
+                    else:
+                        morse_message += MORSE_CODE_REVERSED.get(symbols, '') + ' '
+                        symbols = ''
+
+                if morse_message:
+                    print(f"Decoded message: {morse_message.strip()}")
+                    morse_message = ''
+
+            buffer = np.array([], dtype='float32')
 
 if __name__ == "__main__":
-    print("Listening for Morse audio...")
-    recording = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1, dtype='float32')
-    sd.wait()
-    recording = recording.flatten()
-    decoded_message = decode_audio(recording, threshold)
-    print(f"Decoded Morse: {decoded_message}")
+    print("Starting Morse Code Receiver (Listening continuously)...")
+    stream = sd.InputStream(callback=audio_callback, channels=1, samplerate=samplerate)
+    with stream:
+        decode_thread = threading.Thread(target=decode_stream)
+        decode_thread.start()
+        decode_thread.join()

@@ -20,8 +20,10 @@ MORSE_CODE_DICT = {
 frequency = 600  # Hz tone frequency (typical Morse frequency)
 dot_duration = 0.1  # Seconds per dot
 
+
 def text_to_morse(text):
     return ' '.join(MORSE_CODE_DICT.get(i.upper(), '') for i in text)
+
 
 def generate_tone(duration):
     samplerate = 44100
@@ -29,7 +31,9 @@ def generate_tone(duration):
     tone = np.sin(frequency * t * 2 * np.pi)
     return tone
 
+
 def play_morse(morse_code):
+    time.sleep(0.5)  # Initial delay to ensure transmitter readiness
     for symbol in morse_code:
         if symbol == '.':
             tone = generate_tone(dot_duration)
@@ -46,6 +50,7 @@ def play_morse(morse_code):
         elif symbol == '/':
             time.sleep(dot_duration * 7)
         time.sleep(dot_duration)
+
 
 if __name__ == "__main__":
     message = input("Enter the message to send in Morse: ")
