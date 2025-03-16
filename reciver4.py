@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Updated AFSK Receiver with adjusted thresholds and timing
+Updated AFSK Receiver - Adjusted parameters for more accurate decoding
 """
 
 import numpy as np
@@ -12,17 +12,17 @@ MARK_FREQ = 1200  # Hz (Binary 1)
 SPACE_FREQ = 2200  # Hz (Binary 0)
 BAUD_RATE = 300  # Baud rate
 SAMPLE_RATE = 44100  # Hz
-NOISE_THRESHOLD = 0.015  # Slightly increased to reduce false detections
+NOISE_THRESHOLD = 0.1  # Slightly increased to reduce false positives
 CHUNK = 4410  # 0.1 seconds of audio at 44.1kHz
 
 p = pyaudio.PyAudio()
 
-def bandpass_filter(data, center_freq, bandwidth=70):
+def bandpass_filter(data, center_freq, bandwidth=80):
     """Apply a bandpass filter around the target frequency."""
     nyquist = 0.5 * SAMPLE_RATE
     low = (center_freq - bandwidth / 2) / nyquist
     high = (center_freq + bandwidth / 2) / nyquist
-    b, a = butter(3, [low, high], btype='band')
+    b, a = butter(4, [low, high], btype='band')
     return lfilter(b, a, data)
 
 def detect_signal(audio_buffer):
@@ -35,7 +35,7 @@ def detect_signal(audio_buffer):
     return total_energy > NOISE_THRESHOLD
 
 def decode_afsk(audio_buffer):
-    """Decode AFSK signal to binary data."""
+    """Decode AFSK signal to binary data"""
     samples_per_bit = int(SAMPLE_RATE / BAUD_RATE)
     mark_filtered = bandpass_filter(audio_buffer, MARK_FREQ)
     space_filtered = bandpass_filter(audio_buffer, SPACE_FREQ)
@@ -50,7 +50,8 @@ def decode_afsk(audio_buffer):
     return binary_data
 
 def binary_to_text(binary_data):
-    """Convert binary string to text."""
+    """Convert binary string to text"""
+    # Make sure length is multiple of 8
     binary_data = binary_data[:len(binary_data) - (len(binary_data) % 8)]
     text = ""
     for i in range(0, len(binary_data), 8):
@@ -62,7 +63,7 @@ def binary_to_text(binary_data):
     return text
 
 def process_audio(data, audio_buffer, in_signal, signal_start_time):
-    """Process incoming audio data for AFSK signals."""
+    """Process incoming audio data for AFSK signals"""
     if not in_signal and detect_signal(data):
         in_signal = True
         signal_start_time = time.time()
@@ -76,6 +77,7 @@ def process_audio(data, audio_buffer, in_signal, signal_start_time):
                 print(f"Signal received: {signal_duration:.1f} seconds")
                 binary_data = decode_afsk(np.array(audio_buffer))
                 print(f"Binary data length: {len(binary_data)} bits")
+                print(f"Binary: {binary_data}")
                 text = binary_to_text(binary_data)
                 print(f"Decoded message: {text}")
                 print("-" * 40)
