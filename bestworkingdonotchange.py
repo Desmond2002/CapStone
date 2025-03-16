@@ -15,7 +15,7 @@ MORSE_CODE_REVERSED = {
 }
 
 samplerate = 44100
-threshold = 0.02  # Adjust based on your mic input
+threshold = 0.02
 dot_duration = 0.1
 q = queue.Queue()
 
@@ -26,9 +26,11 @@ def audio_callback(indata, frames, t, status):
 
 def listen_and_decode():
     symbols = ''
-    decoding_started = False
-    silence_start = None
+    waiting_for_sync = True
+    waiting_for_message = False
+    message = ''
     signal_start = None
+    silence_start = None
 
     print("Listening for Morse messages...")
 
@@ -49,33 +51,36 @@ def listen_and_decode():
 
                 if duration >= 0.02:
                     if duration < dot_duration * 1.5:
-                        symbols += '.'
+                        if not waiting_for_sync:
+                            symbols += '.'
                     else:
-                        symbols += '-'
+                        if not waiting_for_sync:
+                            symbols += '-'
 
                 silence_start = current_time
 
         if silence_start:
             silence_duration = current_time - silence_start
 
-            if silence_duration >= dot_duration * 7:
-                if not decoding_started:
-                    decoding_started = True
+            if waiting_for_sync:
+                if silence_duration >= dot_duration * 7:
+                    waiting_for_sync = False
+                    waiting_for_message = True
                     symbols = ''
-                    print("\n--- Decoding started ---")
-                elif symbols:
+                    print("\n--- Sync Detected ---")
+            elif waiting_for_message:
+                if silence_duration >= dot_duration * 7:
+                    waiting_for_message = False
+                    print(f"\nDecoded Message: {message}")
+                    message = ''  # Reset after full message received
+            else:
+                if silence_duration >= dot_duration * 3 and symbols:
                     char = MORSE_CODE_REVERSED.get(symbols, '')
                     symbols = ''
                     if char:
-                        print(char, end='', flush=True)
-                    print(' ', end='', flush=True)
-
-            elif silence_duration >= dot_duration * 3:
-                if symbols and decoding_started:
-                    char = MORSE_CODE_REVERSED.get(symbols, '')
-                    symbols = ''
-                    if char:
-                        print(char, end='', flush=True)
+                        message += char
+                elif silence_duration >= dot_duration * 7:
+                    waiting_for_message = True  # Prepare for final decoding pause
 
         if audio_level > threshold:
             if signal_start is None:

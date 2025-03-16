@@ -33,6 +33,9 @@ def generate_tone(duration):
 
 
 def play_morse(morse_code):
+    primer = '... / '
+    morse_code = primer + morse_code + ' /'  # Append word space at the end
+
     for symbol in morse_code:
         if symbol == '.':
             tone = generate_tone(dot_duration)
@@ -50,10 +53,9 @@ def play_morse(morse_code):
             time.sleep(dot_duration * 7)
         time.sleep(dot_duration)
 
+
 if __name__ == "__main__":
     message = input("Enter the message to send in Morse: ")
     morse_code = text_to_morse(message)
-    primer = '... / '
-    morse_code = primer + morse_code
     print(f"Sending Morse: {morse_code}")
     play_morse(morse_code)
