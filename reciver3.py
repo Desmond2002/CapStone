@@ -1,91 +1,100 @@
 import numpy as np
+import scipy.signal as signal
 import pyaudio
-from scipy.signal import butter, lfilter
+import queue
+import threading
 
 # Constants
-MARK_FREQ = 1200  # Hz (bit '1')
-SPACE_FREQ = 2200  # Hz (bit '0')
-BAUD_RATE = 1200   # Baud rate (bits per second)
+MARK_FREQ = 1200  # Hz
+SPACE_FREQ = 2200  # Hz
+BAUD_RATE = 1200  # Bits per second
 SAMPLE_RATE = 44100  # Audio sampling rate
-BUFFER_SIZE = 1024  # Audio buffer
+BUFFER_SIZE = 1024  # Buffer for real-time processing
 
-# Bandpass Filter
-def butter_bandpass(lowcut, highcut, fs, order=5):
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = butter(order, [low, high], btype='band')
-    return b, a
+# Pre-emphasis filter coefficients
+PRE_EMPHASIS_COEFFS = [1, -0.95]
 
-def bandpass_filter(data, lowcut, highcut, fs, order=5):
-    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
-    return lfilter(b, a, data)
+# Band-pass filter design
+def design_bandpass_filter(center_freq, bandwidth, num_taps, sample_rate):
+    nyquist = 0.5 * sample_rate
+    low = (center_freq - bandwidth / 2) / nyquist
+    high = (center_freq + bandwidth / 2) / nyquist
+    return signal.firwin(num_taps, [low, high], pass_zero=False)
 
-# Quadrature Demodulation
-def quadrature_demod(samples):
-    time = np.arange(len(samples)) / SAMPLE_RATE
-    ref_mark = np.exp(-1j * 2 * np.pi * MARK_FREQ * time)
-    ref_space = np.exp(-1j * 2 * np.pi * SPACE_FREQ * time)
+# Hilbert Transform for quadrature demodulation
+def hilbert_transform(sig):
+    analytic_signal = signal.hilbert(sig)
+    return np.imag(analytic_signal)
 
-    demod_mark = np.abs(np.convolve(samples * ref_mark, np.ones(10)/10, mode='same'))
-    demod_space = np.abs(np.convolve(samples * ref_space, np.ones(10)/10, mode='same'))
+# AFSK Demodulation
+def afsk_demodulate(received_signal):
+    # Apply pre-emphasis filter
+    emphasized_signal = signal.lfilter(PRE_EMPHASIS_COEFFS, 1, received_signal)
 
-    return demod_mark, demod_space
+    # Generate quadrature component
+    quadrature_signal = hilbert_transform(emphasized_signal)
 
-# Decode AFSK Signal
-def afsk_demodulate(samples):
-    # Filter signal
-    mark_filtered = bandpass_filter(samples, 1000, 1300, SAMPLE_RATE)
-    space_filtered = bandpass_filter(samples, 2000, 2500, SAMPLE_RATE)
+    # Band-pass filtering for mark & space
+    mark_filter = design_bandpass_filter(MARK_FREQ, 400, 101, SAMPLE_RATE)
+    space_filter = design_bandpass_filter(SPACE_FREQ, 400, 101, SAMPLE_RATE)
 
-    # Quadrature detection
-    mark_strength, space_strength = quadrature_demod(mark_filtered)
+    mark_signal = signal.lfilter(mark_filter, 1, emphasized_signal)
+    space_signal = signal.lfilter(space_filter, 1, emphasized_signal)
 
-    # Decode bits
+    # Envelope detection
+    mark_envelope = np.abs(signal.hilbert(mark_signal))
+    space_envelope = np.abs(signal.hilbert(space_signal))
+
+    # Bit detection
     bitstream = []
-    for i in range(0, len(mark_strength), SAMPLE_RATE // BAUD_RATE):
-        if i + SAMPLE_RATE // BAUD_RATE > len(mark_strength):
-            break
-        mark_power = np.sum(mark_strength[i:i + SAMPLE_RATE // BAUD_RATE])
-        space_power = np.sum(space_strength[i:i + SAMPLE_RATE // BAUD_RATE])
-
-        bit = 1 if mark_power > space_power else 0
-        bitstream.append(bit)
+    samples_per_bit = SAMPLE_RATE // BAUD_RATE
+    for i in range(0, len(received_signal), samples_per_bit):
+        mark_power = np.sum(mark_envelope[i:i + samples_per_bit])
+        space_power = np.sum(space_envelope[i:i + samples_per_bit])
+        bitstream.append(1 if mark_power > space_power else 0)
 
     return bitstream
 
-# Convert Bits to Text
-def bits_to_text(bits):
-    chars = [bits[i:i + 8] for i in range(0, len(bits), 8)]
-    return ''.join(chr(int(''.join(map(str, c)), 2)) for c in chars if len(c) == 8)
+# Convert bitstream to text
+def bitstream_to_text(bitstream):
+    chars = []
+    for i in range(0, len(bitstream), 8):
+        byte = bitstream[i:i + 8]
+        if len(byte) == 8:
+            chars.append(chr(int(''.join(map(str, byte)), 2)))
+    return ''.join(chars)
 
-# Receive AFSK Signal
-def record_signal():
+# Real-time AFSK receiver function
+def real_time_receiver():
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paInt16,
                     channels=1,
                     rate=SAMPLE_RATE,
                     input=True,
                     frames_per_buffer=BUFFER_SIZE)
+    
+    print("Listening for incoming AFSK signals... Press Ctrl+C to stop.")
 
-    print("Listening...")
-    frames = []
     try:
         while True:
-            data = np.frombuffer(stream.read(BUFFER_SIZE), dtype=np.int16)
-            frames.extend(data)
+            # Read incoming audio
+            audio_data = np.frombuffer(stream.read(BUFFER_SIZE, exception_on_overflow=False), dtype=np.int16)
+            audio_signal = audio_data / 32768.0  # Normalize to [-1,1]
+
+            # Demodulate AFSK signal
+            bitstream = afsk_demodulate(audio_signal)
+
+            # Convert bits to text and print live output
+            message = bitstream_to_text(bitstream)
+            if message:
+                print("Received:", message, flush=True, end="")
+
     except KeyboardInterrupt:
-        print("\nStopped recording.")
-    
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-    
-    return np.array(frames, dtype=np.float32) / 32768.0  # Normalize
+        print("\nStopping receiver.")
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
 
+# Run the real-time receiver
 if __name__ == "__main__":
-    audio_signal = record_signal()
-    bitstream = afsk_demodulate(audio_signal)
-    message = bits_to_text(bitstream)
-
-    print("\nReceived Message:", message)
+    real_time_receiver()
