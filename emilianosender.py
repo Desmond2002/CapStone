@@ -1,179 +1,479 @@
+#!/usr/bin/env python3
+"""
+Morse Code Transmitter Application
+---------------------------------
+MacBook-to-MacBook Radio Communication using Morse Code
+
+This application encodes text messages to Morse code audio signals for transmission
+through Baofeng UV-5RX radios. The audio output connects from MacBook to the radio's
+microphone port via a 3.5mm audio jack.
+"""
+
+import sys
+import time
 import numpy as np
 import pyaudio
-import time
-import random
+import threading
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                            QHBoxLayout, QPushButton, QTextEdit, QLabel, 
+                            QSpinBox, QSlider, QGroupBox, QMessageBox, QFrame)
+from PyQt5.QtCore import Qt, pyqtSignal, QThread
+from PyQt5.QtGui import QFont
 
-# AFSK parameters
-SAMPLE_RATE = 44100  # Hz - standard audio sample rate
-MARK_FREQ = 1200     # Hz - frequency representing binary 1
-SPACE_FREQ = 2200    # Hz - frequency representing binary 0
-BAUD_RATE = 1200     # Bits per second - standard for amateur radio AFSK
-SAMPLES_PER_BIT = int(SAMPLE_RATE / BAUD_RATE)
-PACKET_PAUSE = 3     # Seconds between packet transmissions
-VOLUME = 0.7         # Audio volume (0.0 to 1.0)
 
-# Initialize PyAudio once
-p = pyaudio.PyAudio()
+class MorseCode:
+    """Morse code utility class for encoding."""
+    
+    # Standard Morse code mapping
+    MORSE_CODE_DICT = {
+        'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.', 'F': '..-.', 
+        'G': '--.', 'H': '....', 'I': '..', 'J': '.---', 'K': '-.-', 'L': '.-..', 
+        'M': '--', 'N': '-.', 'O': '---', 'P': '.--.', 'Q': '--.-', 'R': '.-.', 
+        'S': '...', 'T': '-', 'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 
+        'Y': '-.--', 'Z': '--..', '1': '.----', '2': '..---', '3': '...--', 
+        '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..',
+        '9': '----.', '0': '-----', '.': '.-.-.-', ',': '--..--', '?': '..--..',
+        "'": '.----.', '!': '-.-.--', '/': '-..-.', '(': '-.--.', ')': '-.--.-',
+        '&': '.-...', ':': '---...', ';': '-.-.-.', '=': '-...-', '+': '.-.-.',
+        '-': '-....-', '_': '..--.-', '"': '.-..-.', '$': '...-..-', '@': '.--.-.'
+    }
+    
+    # Special procedural signals
+    PROCEDURAL_SIGNALS = {
+        'START_TRANSMISSION': '-.-.-',     # KA
+        'END_TRANSMISSION': '.-.-.',       # AR
+        'ERROR': '........',               # 8 dots
+        'WAIT': '.-...',                   # AS
+        'END_OF_WORK': '...-.-',           # SK
+        'INVITATION_TO_TRANSMIT': '-.-'    # K
+    }
 
-def generate_tone(freq, duration):
-    """Generate a sine wave tone at the specified frequency and duration"""
-    samples = (np.sin(2 * np.pi * np.arange(SAMPLE_RATE * duration) * freq / SAMPLE_RATE)).astype(np.float32)
-    return VOLUME * samples
-
-def play_sound(audio_data):
-    """Play audio data directly"""
-    stream = p.open(format=pyaudio.paFloat32, channels=1, rate=SAMPLE_RATE, output=True)
-    stream.write(audio_data.tobytes())
-    stream.stop_stream()
-    stream.close()
-
-def char_to_bits(char):
-    """Convert a character to bits with start and stop bits (UART-like format)"""
-    ascii_val = ord(char)
-    # Start bit (0) + 8 data bits + Stop bit (1)
-    bits = [0]  # Start bit
-    # LSB first (standard for serial)
-    for i in range(8):
-        bits.append((ascii_val >> i) & 1)
-    bits.append(1)  # Stop bit
-    return bits
-
-def string_to_bits(data_str):
-    """Convert an entire string to a sequence of bits"""
-    bits = []
-    for char in data_str:
-        bits.extend(char_to_bits(char))
-    return bits
-
-def generate_afsk(bits):
-    """Generate AFSK audio signal from a sequence of bits"""
-    audio = np.array([], dtype=np.float32)
-    
-    # Add a strong preamble tone to help trigger VOX
-    preamble_tone = generate_tone(MARK_FREQ, 0.5)
-    audio = np.append(audio, preamble_tone)
-    
-    # Add alternating bits preamble to help receiver synchronize
-    preamble_bits = [0, 1] * 16  # 32 bits of alternating 0s and 1s
-    for bit in preamble_bits:
-        if bit == 1:
-            audio = np.append(audio, generate_tone(MARK_FREQ, 1/BAUD_RATE))
-        else:
-            audio = np.append(audio, generate_tone(SPACE_FREQ, 1/BAUD_RATE))
-    
-    # Generate audio for data bits
-    for bit in bits:
-        if bit == 1:
-            audio = np.append(audio, generate_tone(MARK_FREQ, 1/BAUD_RATE))
-        else:
-            audio = np.append(audio, generate_tone(SPACE_FREQ, 1/BAUD_RATE))
-    
-    # Add a postamble
-    postamble_bits = [1, 0] * 8
-    for bit in postamble_bits:
-        if bit == 1:
-            audio = np.append(audio, generate_tone(MARK_FREQ, 1/BAUD_RATE))
-        else:
-            audio = np.append(audio, generate_tone(SPACE_FREQ, 1/BAUD_RATE))
-            
-    return audio
-
-def get_temperature():
-    """Simulate a temperature sensor reading between 20°C and 30°C"""
-    return round(random.uniform(20.0, 30.0), 1)
-
-def create_packet(temp):
-    """Format temperature data into a packet with start/end markers"""
-    packet = f"TEMP:{temp}"
-    
-    # Add a simple checksum (sum of ASCII values modulo 256)
-    checksum = sum(ord(c) for c in packet) % 256
-    packet += f"*{checksum:02X}"
-    
-    return packet
-
-def create_test_message():
-    """Create a simple test message"""
-    message = "TEST"
-    packet = f"TEST:{message}"
-    
-    # Add a simple checksum
-    checksum = sum(ord(c) for c in packet) % 256
-    packet += f"*{checksum:02X}"
-    
-    return packet
-
-def main():
-    print("AFSK Cable Transmitter")
-    print("=====================")
-    print("This script generates AFSK signals and sends them via audio cable")
-    
-    print("\nMODES:")
-    print("1. Temperature data")
-    print("2. Test message")
-    
-    mode = input("\nSelect mode (1-2): ").strip()
-    test_mode = (mode == "2")
-    
-    print("\nSETUP INSTRUCTIONS:")
-    print("1. Connect 3.5mm cable from computer's headphone out to radio's microphone port")
-    print("2. Enable VOX mode on your Baofeng radio (MENU + 4) or prepare to press PTT manually")
-    print("3. Adjust VOX sensitivity if needed")
-    
-    # Ask about PTT method
-    ptt_method = input("\nAre you using VOX mode or manual PTT? (VOX/manual): ").strip().lower()
-    manual_ptt = ptt_method.startswith('m')
-    
-    try:
-        print("\nParameters:")
-        print(f"- Mark frequency: {MARK_FREQ} Hz (binary 1)")
-        print(f"- Space frequency: {SPACE_FREQ} Hz (binary 0)")
-        print(f"- Baud rate: {BAUD_RATE} bps")
-        print(f"- Sample rate: {SAMPLE_RATE} Hz")
-        print(f"- Mode: {'Test message' if test_mode else 'Temperature data'}")
+    @classmethod
+    def encode(cls, text):
+        """Convert a text string to Morse code."""
+        text = text.upper()
+        morse_code = []
         
-        print("\nPress Ctrl+C to stop.")
+        for char in text:
+            if char == ' ':
+                # Add a word space
+                morse_code.append('/')
+            elif char in cls.MORSE_CODE_DICT:
+                morse_code.append(cls.MORSE_CODE_DICT[char])
+            # Skip characters not in dictionary
         
-        count = 1
-        while True:
-            # Create packet based on selected mode
-            if test_mode:
-                packet = create_test_message()
-                print(f"\n[{count}] Sending test message")
-            else:
-                temp = get_temperature()
-                packet = create_packet(temp)
-                print(f"\n[{count}] Temperature: {temp}°C")
+        return ' '.join(morse_code)
+    
+    @classmethod
+    def get_timing_sequence(cls, morse_code, wpm=18):
+        """
+        Convert Morse code string to a timing sequence.
+        Returns a list of (signal_state, duration) tuples where:
+        - signal_state is True for mark (tone on) and False for space (tone off)
+        - duration is in seconds
+        
+        WPM is calculated as PARIS takes 50 units, so:
+        - At 1 WPM, dot duration = 1.2 seconds
+        - At 18 WPM, dot duration = 1.2/18 = 0.0667 seconds
+        """
+        # Calculate dot duration based on WPM
+        dot_duration = 1.2 / wpm
+        
+        timing = []
+        for i, char in enumerate(morse_code):
+            if char == '.':
+                timing.append((True, dot_duration))
+            elif char == '-':
+                timing.append((True, 3 * dot_duration))
+            elif char == ' ':
+                # Space between characters (already added 1 unit after last symbol)
+                timing.append((False, 2 * dot_duration))
+            elif char == '/':
+                # Word space (already added 1 unit after last symbol)
+                timing.append((False, 6 * dot_duration))
+            
+            # Add inter-symbol space (except after spaces and at the end)
+            if char not in [' ', '/'] and i < len(morse_code) - 1 and morse_code[i+1] not in [' ', '/']:
+                timing.append((False, dot_duration))
                 
-            print(f"Packet: {packet}")
+        return timing
+
+
+class MorseAudioGenerator:
+    """Generates audio signals for Morse code transmission."""
+    
+    def __init__(self, tone_frequency=750, sample_rate=44100, volume=0.65):
+        """
+        Initialize the audio generator.
+        
+        Args:
+            tone_frequency: Frequency of the Morse code tone in Hz
+            sample_rate: Audio sample rate
+            volume: Audio volume (0.0 to 1.0)
+        """
+        self.tone_frequency = tone_frequency
+        self.sample_rate = sample_rate
+        self.volume = volume
+        self.p = pyaudio.PyAudio()
+        self.stream = None
+    
+    def generate_tone(self, duration):
+        """Generate a sine wave tone of the given duration in seconds."""
+        t = np.linspace(0, duration, int(self.sample_rate * duration), False)
+        # Apply a slight fade in/out to avoid clicks
+        fade_duration = min(0.01, duration / 10)
+        fade_samples = int(fade_duration * self.sample_rate)
+        
+        # Generate the base tone
+        tone = np.sin(2 * np.pi * self.tone_frequency * t)
+        
+        # Apply fade in
+        if fade_samples > 0:
+            fade_in = np.linspace(0, 1, fade_samples)
+            tone[:fade_samples] *= fade_in
             
-            # Convert to bits
-            bits = string_to_bits(packet)
-            print(f"Encoding {len(bits)} bits")
+            # Apply fade out
+            fade_out = np.linspace(1, 0, fade_samples)
+            tone[-fade_samples:] *= fade_out
+        
+        # Scale by volume
+        return (tone * self.volume).astype(np.float32)
+    
+    def generate_silence(self, duration):
+        """Generate silence of the given duration in seconds."""
+        return np.zeros(int(self.sample_rate * duration), dtype=np.float32)
+    
+    def start_stream(self):
+        """Open the audio output stream."""
+        if self.stream is None or not self.stream.is_active():
+            self.stream = self.p.open(
+                format=pyaudio.paFloat32,
+                channels=1,
+                rate=self.sample_rate,
+                output=True
+            )
+    
+    def stop_stream(self):
+        """Close the audio output stream."""
+        if self.stream is not None and self.stream.is_active():
+            self.stream.stop_stream()
+            self.stream.close()
+            self.stream = None
+    
+    def cleanup(self):
+        """Cleanup resources."""
+        self.stop_stream()
+        self.p.terminate()
+    
+    def generate_preamble(self, duration=2.0, pattern_duration=0.1):
+        """
+        Generate a preamble to trigger VOX activation.
+        Creates alternating tone/silence pattern.
+        """
+        segments = []
+        t = 0
+        while t < duration:
+            segments.append(self.generate_tone(pattern_duration))
+            segments.append(self.generate_silence(pattern_duration))
+            t += 2 * pattern_duration
+        
+        return np.concatenate(segments)
+    
+    def play_timing_sequence(self, timing_sequence):
+        """
+        Play a timing sequence from MorseCode.get_timing_sequence().
+        
+        Args:
+            timing_sequence: List of (signal_state, duration) tuples
+        """
+        self.start_stream()
+        
+        for signal_state, duration in timing_sequence:
+            if signal_state:  # True for mark (tone)
+                samples = self.generate_tone(duration)
+            else:  # False for space (silence)
+                samples = self.generate_silence(duration)
             
-            # Generate AFSK audio
-            audio = generate_afsk(bits)
+            self.stream.write(samples.tobytes())
+
+
+class TransmissionProtocol:
+    """Handles the Morse code transmission protocol."""
+    
+    def __init__(self, audio_generator, wpm=18):
+        """
+        Initialize the transmission protocol.
+        
+        Args:
+            audio_generator: MorseAudioGenerator instance
+            wpm: Words per minute speed
+        """
+        self.audio_generator = audio_generator
+        self.wpm = wpm
+        
+    def transmit_message(self, message, redundancy=1):
+        """
+        Transmit a message using the defined protocol.
+        
+        Args:
+            message: Text message to transmit
+            redundancy: Number of times to repeat each character (for error correction)
+        """
+        # 1. Generate preamble to activate VOX
+        preamble = self.audio_generator.generate_preamble(duration=1.5)
+        self.audio_generator.start_stream()
+        self.audio_generator.stream.write(preamble.tobytes())
+        
+        # 2. Add start marker
+        start_marker = MorseCode.PROCEDURAL_SIGNALS['START_TRANSMISSION']
+        start_timing = MorseCode.get_timing_sequence(start_marker, self.wpm)
+        self.audio_generator.play_timing_sequence(start_timing)
+        
+        # Small pause after start marker
+        time.sleep(0.5)
+        
+        # 3. Encode and transmit the message with redundancy
+        if redundancy > 1:
+            # Apply character-by-character redundancy
+            redundant_message = ''
+            for char in message:
+                redundant_message += char * redundancy
+                if char != ' ':  # Don't add extra space after spaces
+                    redundant_message += ' '
+            morse_message = MorseCode.encode(redundant_message)
+        else:
+            morse_message = MorseCode.encode(message)
             
-            # Transmit the audio
-            if manual_ptt:
-                input("\nPress ENTER, then quickly press and hold PTT on your radio...")
-                time.sleep(1)  # Give user time to press PTT
-                
-            print("Transmitting AFSK signal...")
-            play_sound(audio)
-            
-            # Wait between transmissions
-            print(f"Waiting {PACKET_PAUSE} seconds before next transmission")
-            time.sleep(PACKET_PAUSE)
-            count += 1
-            
-    except KeyboardInterrupt:
-        print("\nTransmission stopped by user.")
-    except Exception as e:
-        print(f"\nError: {str(e)}")
-    finally:
-        # Clean up PyAudio
-        p.terminate()
+        message_timing = MorseCode.get_timing_sequence(morse_message, self.wpm)
+        self.audio_generator.play_timing_sequence(message_timing)
+        
+        # 4. Add end marker
+        end_marker = MorseCode.PROCEDURAL_SIGNALS['END_TRANSMISSION']
+        end_timing = MorseCode.get_timing_sequence(end_marker, self.wpm)
+        self.audio_generator.play_timing_sequence(end_timing)
+        
+        # Close the stream
+        self.audio_generator.stop_stream()
+
+
+class TransmissionWorker(QThread):
+    """Worker thread for sending transmission without blocking the UI."""
+    finished = pyqtSignal()
+    status_update = pyqtSignal(str)
+    
+    def __init__(self, protocol, message, redundancy):
+        super().__init__()
+        self.protocol = protocol
+        self.message = message
+        self.redundancy = redundancy
+        
+    def run(self):
+        try:
+            self.status_update.emit("Transmitting...")
+            self.protocol.transmit_message(self.message, self.redundancy)
+            self.status_update.emit("Transmission complete.")
+        except Exception as e:
+            self.status_update.emit(f"Error: {str(e)}")
+        finally:
+            self.finished.emit()
+
+
+class MorseTransmitterApp(QMainWindow):
+    """Main window for the Morse code transmitter application."""
+    
+    def __init__(self):
+        super().__init__()
+        
+        # Initialize audio and protocol objects
+        self.audio_generator = MorseAudioGenerator()
+        self.protocol = TransmissionProtocol(self.audio_generator)
+        
+        # Configure the window
+        self.setWindowTitle("Morse Code Transmitter")
+        self.setGeometry(100, 100, 800, 600)
+        
+        self.init_ui()
+        
+    def init_ui(self):
+        """Initialize the user interface."""
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        main_layout = QVBoxLayout(central_widget)
+        
+        # Message input section
+        message_group = QGroupBox("Message")
+        message_layout = QVBoxLayout()
+        
+        self.message_input = QTextEdit()
+        self.message_input.setPlaceholderText("Type your message here...")
+        self.message_input.setMinimumHeight(100)
+        message_layout.addWidget(self.message_input)
+        
+        message_group.setLayout(message_layout)
+        main_layout.addWidget(message_group)
+        
+        # Morse code preview section
+        morse_group = QGroupBox("Morse Code Preview")
+        morse_layout = QVBoxLayout()
+        
+        self.morse_preview = QTextEdit()
+        self.morse_preview.setReadOnly(True)
+        self.morse_preview.setFont(QFont("Courier", 10))
+        morse_layout.addWidget(self.morse_preview)
+        
+        self.message_input.textChanged.connect(self.update_morse_preview)
+        
+        morse_group.setLayout(morse_layout)
+        main_layout.addWidget(morse_group)
+        
+        # Settings section
+        settings_group = QGroupBox("Transmission Settings")
+        settings_layout = QHBoxLayout()
+        
+        # WPM settings
+        wpm_layout = QVBoxLayout()
+        wpm_label = QLabel("Speed (WPM):")
+        self.wpm_spinner = QSpinBox()
+        self.wpm_spinner.setRange(10, 25)
+        self.wpm_spinner.setValue(18)
+        self.wpm_spinner.valueChanged.connect(self.update_settings)
+        wpm_layout.addWidget(wpm_label)
+        wpm_layout.addWidget(self.wpm_spinner)
+        settings_layout.addLayout(wpm_layout)
+        
+        # Tone frequency settings
+        freq_layout = QVBoxLayout()
+        freq_label = QLabel("Tone Frequency (Hz):")
+        self.freq_spinner = QSpinBox()
+        self.freq_spinner.setRange(500, 1000)
+        self.freq_spinner.setValue(750)
+        self.freq_spinner.setSingleStep(10)
+        self.freq_spinner.valueChanged.connect(self.update_settings)
+        freq_layout.addWidget(freq_label)
+        freq_layout.addWidget(self.freq_spinner)
+        settings_layout.addLayout(freq_layout)
+        
+        # Volume settings
+        volume_layout = QVBoxLayout()
+        volume_label = QLabel("Volume:")
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setRange(1, 100)
+        self.volume_slider.setValue(65)
+        self.volume_slider.valueChanged.connect(self.update_settings)
+        volume_layout.addWidget(volume_label)
+        volume_layout.addWidget(self.volume_slider)
+        settings_layout.addLayout(volume_layout)
+        
+        # Redundancy settings
+        redundancy_layout = QVBoxLayout()
+        redundancy_label = QLabel("Character Redundancy:")
+        self.redundancy_spinner = QSpinBox()
+        self.redundancy_spinner.setRange(1, 3)
+        self.redundancy_spinner.setValue(1)
+        redundancy_layout.addWidget(redundancy_label)
+        redundancy_layout.addWidget(self.redundancy_spinner)
+        settings_layout.addLayout(redundancy_layout)
+        
+        settings_group.setLayout(settings_layout)
+        main_layout.addWidget(settings_group)
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        
+        self.test_button = QPushButton("Test Audio")
+        self.test_button.clicked.connect(self.test_audio)
+        button_layout.addWidget(self.test_button)
+        
+        self.transmit_button = QPushButton("Transmit Message")
+        self.transmit_button.clicked.connect(self.transmit_message)
+        self.transmit_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        button_layout.addWidget(self.transmit_button)
+        
+        main_layout.addLayout(button_layout)
+        
+        # Status bar
+        self.status_label = QLabel("Ready")
+        self.status_label.setFrameStyle(QFrame.Panel | QFrame.Sunken)
+        main_layout.addWidget(self.status_label)
+        
+        # Initialize worker thread variable
+        self.worker = None
+        
+    def update_morse_preview(self):
+        """Update the Morse code preview when message changes."""
+        text = self.message_input.toPlainText()
+        morse_code = MorseCode.encode(text)
+        self.morse_preview.setText(morse_code)
+        
+    def update_settings(self):
+        """Update audio generator and protocol settings."""
+        wpm = self.wpm_spinner.value()
+        freq = self.freq_spinner.value()
+        volume = self.volume_slider.value() / 100.0
+        
+        self.audio_generator.tone_frequency = freq
+        self.audio_generator.volume = volume
+        self.protocol.wpm = wpm
+        
+    def test_audio(self):
+        """Test the audio output with a short sequence."""
+        test_sequence = [
+            (True, 0.1),   # Short tone
+            (False, 0.1),  # Short silence
+            (True, 0.3),   # Long tone
+            (False, 0.1),  # Short silence
+            (True, 0.1)    # Short tone
+        ]
+        
+        # Update status
+        self.status_label.setText("Testing audio...")
+        
+        # Run in a separate thread to not block the UI
+        def run_test():
+            self.audio_generator.start_stream()
+            self.audio_generator.play_timing_sequence(test_sequence)
+            self.audio_generator.stop_stream()
+            self.status_label.setText("Audio test complete")
+        
+        threading.Thread(target=run_test).start()
+        
+    def transmit_message(self):
+        """Transmit the current message."""
+        message = self.message_input.toPlainText()
+        if not message:
+            QMessageBox.warning(self, "Empty Message", 
+                               "Please enter a message to transmit.")
+            return
+        
+        # Disable the transmit button during transmission
+        self.transmit_button.setEnabled(False)
+        
+        # Get the redundancy setting
+        redundancy = self.redundancy_spinner.value()
+        
+        # Create and start the worker thread
+        self.worker = TransmissionWorker(self.protocol, message, redundancy)
+        self.worker.status_update.connect(self.update_status)
+        self.worker.finished.connect(self.on_transmission_finished)
+        self.worker.start()
+    
+    def update_status(self, status):
+        """Update the status label."""
+        self.status_label.setText(status)
+    
+    def on_transmission_finished(self):
+        """Enable the transmit button when transmission is finished."""
+        self.transmit_button.setEnabled(True)
+    
+    def closeEvent(self, event):
+        """Clean up resources when the window is closed."""
+        self.audio_generator.cleanup()
+        event.accept()
+
 
 if __name__ == "__main__":
-    main()
+    app = QApplication(sys.argv)
+    window = MorseTransmitterApp()
+    window.show()
+    sys.exit(app.exec_())

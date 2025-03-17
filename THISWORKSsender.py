@@ -20,7 +20,6 @@ dot_duration = 0.1  # Seconds
 
 def text_to_morse(text):
     return ' '.join(MORSE_CODE_DICT.get(i.upper(), '') for i in text)
-
 def generate_tone(duration):
     t = np.linspace(0, duration, int(44100 * duration), False)
     return 0.5 * np.sin(2 * np.pi * frequency * t)
