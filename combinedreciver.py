@@ -12,88 +12,88 @@ MORSE_CODE_REVERSED = {
     '..-': 'U', '...-': 'V', '.--': 'W', '-..-': 'X', '-.--': 'Y',
     '--..': 'Z', '-----': '0', '.----': '1', '..---': '2',
     '...--': '3', '....-': '4', '.....': '5', '-....': '6',
-    '--...': '7', '---..': '8', '----.': '9', '/': ' ', '--..--': ',',
-    '.-.-.-': '.', '..--..': '?', '-..-.': '/', '-....-': '-',
-    '-.--.': '(', '-.--.-': ')', '': ''
+    '--...': '7', '---..': '8', '----.': '9', '--..--': ',',
+    '.-.-.-': '.', '-....-': '-', '-..-.': '/', '-..--': '|',
+    '/': ' '
 }
 
 samplerate = 44100
-threshold = 0.03
-dot_duration = 0.1
+threshold = 0.05  # More sensitive
+dot_duration = 0.2  # Matches sender
 q = queue.Queue()
 
 def audio_callback(indata, frames, time, status):
     q.put(indata.copy())
 
-def process_received_data(data_str):
-    parts = data_str.split(',')
-    if len(parts) != 8:
-        print(f"Invalid data format: {data_str}")
-        return
-
+def parse_data(payload):
     try:
-        device_id = parts[0]
-        recorded_at = parts[1].replace('-', ':', 2).replace('T', 'T')
-        output = {
-            "device_id": device_id,
-            "recorded_at": recorded_at,
+        parts = payload.split('|')
+        if len(parts) != 5: return None
+        
+        return {
+            "device_id": parts[0],
+            "timestamp": f"{parts[1][0:4]}-{parts[1][4:6]}-{parts[1][6:11]}:{parts[1][11:13]}:{parts[1][13:15]}",
             "carbon_monoxide_ppm": float(parts[2]),
             "temperature_celcius": float(parts[3]),
-            "pm1_ug_m3": float(parts[4]),
-            "pm2_5_ug_m3": float(parts[5]),
-            "pm4_ug_m3": float(parts[6]),
-            "pm10_ug_m3": float(parts[7])
+            "pm2_5_ug_m3": float(parts[4])
         }
-        print("\nReceived Device Data:")
-        print(json.dumps(output, indent=2))
-    except (ValueError, IndexError) as e:
-        print(f"Error parsing data: {e}")
+    except Exception as e:
+        print(f"Parse error: {e}")
+        return None
 
 def listen_and_decode():
     current_symbol = ''
-    message = ''
+    message_buffer = ''
     last_time = time.time()
     in_signal = False
+    noise_buffer = 0.5  # Wait 500ms after signal ends
 
-    with sd.InputStream(callback=audio_callback, channels=1, samplerate=samplerate, blocksize=1024):
+    with sd.InputStream(callback=audio_callback, channels=1, samplerate=samplerate):
         print("Listening for Morse code...")
         while True:
             try:
                 data = q.get_nowait().flatten()
-                rms = np.sqrt(np.mean(np.square(data)))
-                
+                rms = np.sqrt(np.mean(data**2))
+
                 if rms > threshold and not in_signal:
                     in_signal = True
                     signal_start = time.time()
-                    if (signal_start - last_time) > 3*dot_duration and current_symbol:
-                        message += MORSE_CODE_REVERSED.get(current_symbol, '?')
-                        current_symbol = ''
-                        print(f"\rCurrent message: {message}", end='')
+                    silence_duration = signal_start - last_time
                     
+                    if silence_duration > (3*dot_duration + noise_buffer) and current_symbol:
+                        char = MORSE_CODE_REVERSED.get(current_symbol, '?')
+                        message_buffer += char
+                        current_symbol = ''
+                        print(f"\rReceived: {message_buffer}", end='', flush=True)
+
                 elif rms <= threshold and in_signal:
                     in_signal = False
                     signal_duration = time.time() - signal_start
                     last_time = time.time()
-                    
-                    if signal_duration < 1.5*dot_duration:
+
+                    if signal_duration < (1.5 * dot_duration):
                         current_symbol += '.'
                     else:
                         current_symbol += '-'
-                        
-                elif not in_signal and (time.time() - last_time) > 7*dot_duration:
-                    if current_symbol:
-                        message += MORSE_CODE_REVERSED.get(current_symbol, '?')
-                        current_symbol = ''
-                    if message and message[-1] != ' ':
-                        message += ' '
-                        print(f"\rCurrent message: {message}", end='')
 
-                    if message.strip().endswith('/'):
-                        parts = message.strip().split(' / ')
-                        if len(parts) >= 2:
-                            data_part = parts[1]
-                            process_received_data(data_part)
-                            message = ''
+                # Finalize message after long silence
+                if (time.time() - last_time) > (7 * dot_duration + noise_buffer):
+                    if current_symbol:
+                        char = MORSE_CODE_REVERSED.get(current_symbol, '?')
+                        message_buffer += char
+                        current_symbol = ''
+                    
+                    if message_buffer:
+                        if '.../' in message_buffer and '/...' in message_buffer:
+                            try:
+                                payload = message_buffer.split('.../')[1].split('/...')[0].strip()
+                                data = parse_data(payload)
+                                if data:
+                                    print("\n\nVALID TRANSMISSION:")
+                                    print(json.dumps(data, indent=2))
+                            except Exception as e:
+                                print(f"\nDecoding error: {e}")
+                        message_buffer = ''
 
             except queue.Empty:
                 time.sleep(0.01)
