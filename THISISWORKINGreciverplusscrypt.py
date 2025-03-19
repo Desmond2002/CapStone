@@ -18,7 +18,7 @@ MORSE_CODE_REVERSED = {
 
 samplerate = 44100
 threshold = 0.05
-dot_duration = 0.12
+dot_duration = 0.1
 q = queue.Queue()
 
 def audio_callback(indata, frames, time, status):
