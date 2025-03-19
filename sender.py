@@ -11,7 +11,6 @@ PREVIOUS_READINGS_FILE = "previous_readings.json"
 device_ids = ["device_1"]
 
 # Radio transmission configuration
-# Radio transmission configuration
 MORSE_CODE_DICT = {
     # Optimized numbers (shorter codes)
     '0': '-',    # Was '-----' (5)
@@ -31,7 +30,7 @@ MORSE_CODE_DICT = {
 }
 
 FREQUENCY = 600
-dot_duration = 0.06  # Reduced from 0.1 (40% faster)
+dot_duration = 0.1
 
 def text_to_morse(text):
     return ' '.join(MORSE_CODE_DICT.get(i, '') for i in text)

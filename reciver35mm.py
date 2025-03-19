@@ -24,10 +24,6 @@ MORSE_CODE_REVERSED = {
 
 samplerate = 44100
 threshold = 0.05
-dot_duration = 0.06
-
-samplerate = 44100
-threshold = 0.05
 dot_duration = 0.12
 q = queue.Queue()
 
@@ -82,17 +78,23 @@ def listen_and_decode():
                 if not in_signal:
                     silence_duration = time.time() - last_activity
                     
-                    # Word space (modified threshold)
-                    if silence_duration > 5*dot_duration and message_buffer:
+                    # Word space handling
+                    if silence_duration > 7*dot_duration and message_buffer:
                         message_buffer += ' '
-                        print(f"\rReceiving: {message_buffer}", end='')
+                        # Clear previous line completely
+                        print(' ' * last_print_len, end='\r')
+                        print(f"Receiving: {message_buffer}", end='\r')
+                        last_print_len = len(message_buffer) + 10
                     
-                    # Character space (modified threshold)
-                    elif silence_duration > 1.5*dot_duration and current_symbol:
+                    # Character space handling
+                    elif silence_duration > 3*dot_duration and current_symbol:
                         char = MORSE_CODE_REVERSED.get(current_symbol, '')
                         message_buffer += char
                         current_symbol = ''
-                        print(f"\rReceiving: {message_buffer}", end='')
+                        # Clear previous line completely
+                        print(' ' * last_print_len, end='\r')
+                        print(f"Receiving: {message_buffer}", end='\r')
+                        last_print_len = len(message_buffer) + 10
 
             except queue.Empty:
                 time.sleep(0.01)
