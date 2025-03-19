@@ -147,33 +147,41 @@ def handle_reading(timestamp, device_id, previous_readings):
     print(f"Transmitting: {message}")
     play_morse(text_to_morse(message))
 
-def main(start_date, end_date):
+def main():
     last_timestamp = load_progress()
     previous_readings = load_previous_readings()
 
-    start_dt = datetime.datetime.fromisoformat(start_date).replace(tzinfo=datetime.timezone.utc)
-    end_dt = datetime.datetime.fromisoformat(end_date).replace(tzinfo=datetime.timezone.utc)
-
+    # Calculate next transmission time
     if last_timestamp:
-        start_dt = datetime.datetime.fromisoformat(last_timestamp).replace(tzinfo=datetime.timezone.utc)
-
-    current_dt = start_dt
+        next_transmission = datetime.datetime.fromisoformat(last_timestamp).astimezone(datetime.timezone.utc)
+    else:
+        next_transmission = datetime.datetime.now(datetime.timezone.utc)
 
     try:
-        while current_dt < end_dt:
-            for device_id in device_ids:
-                handle_reading(current_dt, device_id, previous_readings)
-
-            save_progress(current_dt.isoformat())
-            save_previous_readings(previous_readings)
-            time.sleep(180)
-            current_dt += datetime.timedelta(minutes=3)
+        while True:
+            # Calculate sleep duration
+            now = datetime.datetime.now(datetime.timezone.utc)
+            sleep_seconds = (next_transmission - now).total_seconds()
             
+            if sleep_seconds > 0:
+                print(f"Next transmission at {next_transmission.isoformat()}")
+                time.sleep(sleep_seconds)
+
+            # Generate and transmit reading
+            transmission_time = datetime.datetime.now(datetime.timezone.utc)
+            for device_id in device_ids:
+                handle_reading(transmission_time, device_id, previous_readings)
+
+            # Update and save progress
+            next_transmission = transmission_time + datetime.timedelta(minutes=3)
+            save_progress(transmission_time.isoformat())
+            save_previous_readings(previous_readings)
+
     except KeyboardInterrupt:
         print("\nInterrupted. Saving progress before exiting...")
-        save_progress(current_dt.isoformat())
+        save_progress(next_transmission.isoformat())
         save_previous_readings(previous_readings)
         print("Progress saved. You can resume later.")
 
 if __name__ == "__main__":
-    main("2024-07-19T03:15:00", "2025-01-31T00:00:00")
+    main()
