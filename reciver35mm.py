@@ -32,64 +32,68 @@ def listen_and_decode():
     in_signal = False
 
     with sd.InputStream(callback=audio_callback, channels=1, samplerate=samplerate, blocksize=1024):
-        print("Listening for Morse code...")
+        print("Listening for sensor data...")
         while True:
+            # Check for message completion timeout
+            if (time.time() - last_activity) > TIMEOUT and message_buffer:
+                process_message(message_buffer)
+                message_buffer = ''
+                current_symbol = ''
+
             try:
                 data = q.get_nowait().flatten()
                 rms = np.sqrt(np.mean(np.square(data)))
                 
                 if rms > threshold and not in_signal:
-                    # Signal started
                     in_signal = True
                     signal_start = time.time()
-                    if (signal_start - last_time) > 3*dot_duration and current_symbol:
-                        # New character
-                        message += MORSE_CODE_REVERSED.get(current_symbol, '?')
+                    if (signal_start - last_activity) > 3*dot_duration and current_symbol:
+                        message_buffer += MORSE_CODE_REVERSED.get(current_symbol, '?')
                         current_symbol = ''
-                        print(f"\rCurrent message: {message}", end='')
-                    
+                        last_activity = time.time()
+                        
                 elif rms <= threshold and in_signal:
-                    # Signal ended
                     in_signal = False
                     signal_duration = time.time() - signal_start
-                    last_time = time.time()
+                    last_activity = time.time()
                     
                     if signal_duration < 1.5*dot_duration:
                         current_symbol += '.'
                     else:
                         current_symbol += '-'
                         
-                elif not in_signal and (time.time() - last_time) > 7*dot_duration:
-                    # End of word
+                elif not in_signal and (time.time() - last_activity) > 7*dot_duration:
                     if current_symbol:
-                        message += MORSE_CODE_REVERSED.get(current_symbol, '?')
+                        message_buffer += MORSE_CODE_REVERSED.get(current_symbol, '?')
                         current_symbol = ''
-                    if message and message[-1] != ' ':
-                        message += ' '
-                        print(f"\rCurrent message: {message}", end='')
+                    if message_buffer and message_buffer[-1] != ' ':
+                        message_buffer += ' '
+                    last_activity = time.time()
 
             except queue.Empty:
                 time.sleep(0.01)
 
 def process_message(raw_message):
     try:
-        parts = raw_message.strip().split()
-        if len(parts) != 8:
+        # Clean the message by removing primer/extra characters
+        clean_message = raw_message.replace('...', '').replace('S', '').replace('I', '').strip()
+        parts = clean_message.split()
+        
+        if len(parts) != 7:
             print(f"Invalid message length: {len(parts)} parts")
             return
 
         device_num = parts[0]
-        timestamp = datetime.fromtimestamp(int(parts[1]))
-        co = parts[2]
-        temp = parts[3]
-        pm1 = parts[4]
-        pm25 = parts[5]
-        pm4 = parts[6]
-        pm10 = parts[7]
+        co = parts[1]
+        temp = parts[2]
+        pm1 = parts[3]
+        pm25 = parts[4]
+        pm4 = parts[5]
+        pm10 = parts[6]
 
         print(f"\n\n=== Data Received ===")
         print(f"Device: {device_num}")
-        print(f"Timestamp: {timestamp.isoformat()}")
+        print(f"Timestamp: {datetime.now().isoformat()}")
         print(f"Carbon Monoxide: {co} ppm")
         print(f"Temperature: {temp} °C")
         print(f"PM1: {pm1} µg/m³")

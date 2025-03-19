@@ -132,10 +132,9 @@ def generate_reading(device_id, previous_readings, timestamp):
 def handle_reading(timestamp, device_id, previous_readings):
     reading = generate_reading(device_id, previous_readings, timestamp)
     
-    # Create transmission message
+    # Create transmission message (device number + sensor values)
     values = [
         reading['device_id'].split('_')[1],  # Device number
-        str(int(timestamp.timestamp())),     # Unix timestamp
         f"{reading['carbon_monoxide_ppm']:.2f}",
         f"{reading['temperature_celcius']:.2f}",
         f"{reading['pm1_ug_m3']:.2f}",
