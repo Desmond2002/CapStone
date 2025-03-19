@@ -2,6 +2,7 @@ import numpy as np
 import sounddevice as sd
 import queue
 import time
+import json
 
 MORSE_CODE_REVERSED = {
     '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E',
@@ -46,6 +47,8 @@ def listen_and_decode():
     sync_count = 0
     in_signal = False
     receiving_data = False
+    signal_start = time.time()  # Initialize timing variables
+    last_signal = time.time()
 
     with sd.InputStream(callback=audio_callback, channels=1, samplerate=samplerate, blocksize=1024):
         print("Listening for Morse code...")
@@ -53,25 +56,27 @@ def listen_and_decode():
             try:
                 data = q.get_nowait().flatten()
                 rms = np.sqrt(np.mean(np.square(data)))
-                
+                current_time = time.time()
+
                 if rms > threshold:
                     if not in_signal:
                         in_signal = True
-                        signal_start = time.time()
+                        signal_start = current_time
+                        last_signal = current_time
                         if not receiving_data:
-                            if time.time() - last_signal > 5*dot_duration:
+                            if (current_time - last_signal) > 5*dot_duration:
                                 sync_count = 0
                 else:
                     if in_signal:
                         in_signal = False
-                        signal_duration = time.time() - signal_start
+                        signal_duration = current_time - signal_start
+                        last_signal = current_time
                         
                         if signal_duration < 1.5*dot_duration:
                             current_symbol += '.'
                         else:
                             current_symbol += '-'
-                        
-                        # Check for sync pattern
+
                         if not receiving_data:
                             if current_symbol == '.':
                                 sync_count += 1
@@ -81,8 +86,7 @@ def listen_and_decode():
                             else:
                                 sync_count = 0
 
-                # Process symbols
-                if not in_signal and (time.time() - signal_start) > 3*dot_duration:
+                if not in_signal and (current_time - signal_start) > 3*dot_duration:
                     if current_symbol:
                         char = MORSE_CODE_REVERSED.get(current_symbol, '?')
                         buffer += char
@@ -90,8 +94,6 @@ def listen_and_decode():
                         
                         if receiving_data:
                             print(f"\rReceiving: {buffer}", end='')
-                            
-                            # Check for end of transmission
                             if buffer.endswith('/'):
                                 data_str = buffer[:-1].strip()
                                 data = parse_data(data_str)

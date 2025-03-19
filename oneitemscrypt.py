@@ -3,55 +3,11 @@ import datetime
 import os
 import random
 import time
-import numpy as np
-import sounddevice as sd
 
 PROGRESS_FILE = "progress.json"
 PREVIOUS_READINGS_FILE = "previous_readings.json"
 
 device_ids = ["device_1"]
-
-# Radio transmission configuration
-MORSE_CODE_DICT = { 
-    'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.',
-    'F': '..-.', 'G': '--.', 'H': '....', 'I': '..', 'J': '.---',
-    'K': '-.-', 'L': '.-..', 'M': '--', 'N': '-.', 'O': '---',
-    'P': '.--.', 'Q': '--.-', 'R': '.-.', 'S': '...', 'T': '-',
-    'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 'Y': '-.--',
-    'Z': '--..', '1': '.----', '2': '..---', '3': '...--',
-    '4': '....-', '5': '.....', '6': '-....', '7': '--...',
-    '8': '---..', '9': '----.', '0': '-----', ',': '--..--',
-    '.': '.-.-.-', '?': '..--..', '/': '-..-.', '-': '-....-',
-    '(': '-.--.', ')': '-.--.-', ' ': '/'
-}
-
-FREQUENCY = 600  # Hz
-DOT_DURATION = 0.1  # Seconds
-
-def text_to_morse(text):
-    return ' '.join(MORSE_CODE_DICT.get(i.upper(), '') for i in text)
-
-def generate_tone(duration):
-    t = np.linspace(0, duration, int(44100 * duration), False)
-    return 0.5 * np.sin(2 * np.pi * FREQUENCY * t)
-
-def play_morse(morse_code):
-    primer = '... / '
-    morse_code = primer + morse_code + ' /'
-    
-    for symbol in morse_code:
-        if symbol == '.':
-            sd.play(generate_tone(DOT_DURATION), samplerate=44100)
-            sd.wait()
-            time.sleep(DOT_DURATION)
-        elif symbol == '-':
-            sd.play(generate_tone(3*DOT_DURATION), samplerate=44100)
-            sd.wait()
-            time.sleep(DOT_DURATION)
-        elif symbol == ' ':
-            time.sleep(3*DOT_DURATION)
-        elif symbol == '/':
-            time.sleep(7*DOT_DURATION)
 
 def load_previous_readings():
     if os.path.exists(PREVIOUS_READINGS_FILE):
@@ -67,6 +23,7 @@ def save_previous_readings(previous_readings):
         json.dump(previous_readings, file)
 
 def load_progress():
+    """Load the last timestamp from the progress file."""
     if os.path.exists(PROGRESS_FILE):
         with open(PROGRESS_FILE, 'r') as file:
             try:
@@ -115,14 +72,7 @@ def generate_reading(device_id, previous_readings, timestamp):
     else:
         pm10 = max(0, round(prev["pm10"] + random.uniform(-0.15, 0.15), 2))
 
-    previous_readings[device_id] = {
-        "co": co_level,
-        "temperature": temperature,
-        "pm1": pm1,
-        "pm2_5": pm2_5,
-        "pm4": pm4,
-        "pm10": pm10
-    }
+    previous_readings[device_id] = {"co": co_level, "temperature": temperature, "pm1": pm1, "pm2_5": pm2_5, "pm4": pm4, "pm10": pm10}
 
     return {
         "device_id": str(device_id),
@@ -137,13 +87,7 @@ def generate_reading(device_id, previous_readings, timestamp):
 
 def handle_reading(timestamp, device_id, previous_readings):
     reading = generate_reading(device_id, previous_readings, timestamp)
-    json_output = json.dumps(reading, indent=2)
-    message = f"Generated reading: {json_output}"
-    
-    print(message)
-    print("\nStarting radio transmission...")
-    play_morse(text_to_morse(message))
-    print("Radio transmission complete\n")
+    print(f"Generated reading: {json.dumps(reading, indent=2)}")
 
 def main(start_date, end_date):
     last_timestamp = load_progress()
@@ -164,7 +108,10 @@ def main(start_date, end_date):
 
             save_progress(current_dt.isoformat())
             save_previous_readings(previous_readings)
-            time.sleep(180)
+
+            # Add the 3-minute delay here
+            time.sleep(180)  # 180 seconds = 3 minutes
+            
             current_dt += datetime.timedelta(minutes=3)
             
     except KeyboardInterrupt:
