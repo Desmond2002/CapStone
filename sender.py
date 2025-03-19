@@ -19,7 +19,7 @@ MORSE_CODE_DICT = {
 }
 
 FREQUENCY = 600
-DOT_DURATION = 0.1
+dot_duration = 0.1
 
 def text_to_morse(text):
     return ' '.join(MORSE_CODE_DICT.get(i, '') for i in text)
@@ -29,19 +29,23 @@ def generate_tone(duration):
     return 0.5 * np.sin(2 * np.pi * FREQUENCY * t)
 
 def play_morse(morse_code):
+    primer = '... / '
+    morse_code = primer + morse_code + ' /'
+    
     for symbol in morse_code:
         if symbol == '.':
-            sd.play(generate_tone(DOT_DURATION), samplerate=44100)
+            sd.play(generate_tone(dot_duration), samplerate=44100)
             sd.wait()
-            time.sleep(DOT_DURATION)
+            time.sleep(dot_duration)  # Inter-symbol space
         elif symbol == '-':
-            sd.play(generate_tone(3*DOT_DURATION), samplerate=44100)
+            sd.play(generate_tone(3*dot_duration), samplerate=44100)
             sd.wait()
-            time.sleep(DOT_DURATION)
+            time.sleep(dot_duration)  # Inter-symbol space
         elif symbol == ' ':
-            time.sleep(3*DOT_DURATION)
+            time.sleep(3*dot_duration)  # Inter-character space
         elif symbol == '/':
-            time.sleep(7*DOT_DURATION)
+            time.sleep(7*dot_duration)  # Inter-word space
+
 
 def load_previous_readings():
     if os.path.exists(PREVIOUS_READINGS_FILE):
