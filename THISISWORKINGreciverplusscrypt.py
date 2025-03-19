@@ -2,7 +2,7 @@ import numpy as np
 import sounddevice as sd
 import queue
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 MORSE_CODE_REVERSED = {
     '.-': 'A', '-...': 'B', '-.-.': 'C', '-..': 'D', '.': 'E',
@@ -18,7 +18,7 @@ MORSE_CODE_REVERSED = {
 
 samplerate = 44100
 threshold = 0.05
-dot_duration = 0.1
+dot_duration = 0.12
 q = queue.Queue()
 
 def audio_callback(indata, frames, time, status):
@@ -30,6 +30,7 @@ def listen_and_decode():
     last_activity = time.time()
     in_signal = False
     receiving_message = False
+    last_print_len = 0  # Track previous message length
 
     with sd.InputStream(callback=audio_callback, channels=1, samplerate=samplerate):
         print("Listening for sensor data...")
@@ -71,22 +72,29 @@ def listen_and_decode():
                 if not in_signal:
                     silence_duration = time.time() - last_activity
                     
-                    # Word space (7+ dot durations)
+                    # Word space handling
                     if silence_duration > 7*dot_duration and message_buffer:
                         message_buffer += ' '
-                        print(f"\rReceiving: {message_buffer}", end='', flush=True)
+                        # Clear previous line completely
+                        print(' ' * last_print_len, end='\r')
+                        print(f"Receiving: {message_buffer}", end='\r')
+                        last_print_len = len(message_buffer) + 10
                     
-                    # Character space (3+ dot durations)
+                    # Character space handling
                     elif silence_duration > 3*dot_duration and current_symbol:
                         char = MORSE_CODE_REVERSED.get(current_symbol, '')
                         message_buffer += char
                         current_symbol = ''
-                        print(f"\rReceiving: {message_buffer}", end='', flush=True)
+                        # Clear previous line completely
+                        print(' ' * last_print_len, end='\r')
+                        print(f"Receiving: {message_buffer}", end='\r')
+                        last_print_len = len(message_buffer) + 10
 
             except queue.Empty:
                 time.sleep(0.01)
 
 def process_message(raw_message):
+    print(' ' * 100, end='\r')
     try:
         # Clean and validate message
         clean = raw_message.replace('...', '')  # Remove primer
@@ -103,16 +111,18 @@ def process_message(raw_message):
         if len(payload) != 7:
             print(f"\nInvalid format: {clean} (got {len(payload)}/7 values)")
             return
+        
+        recorded_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-        print(f"\n\n=== Sensor Data @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
-        print(f"Device:    {payload[0]}")
-        print(f"CO:        {payload[1]} ppm")
-        print(f"Temp:      {payload[2]} °C")
-        print(f"PM1:       {payload[3]} µg/m³")
-        print(f"PM2.5:     {payload[4]} µg/m³")
-        print(f"PM4:       {payload[5]} µg/m³")
-        print(f"PM10:      {payload[6]} µg/m³")
-        print("========================================")
+        print(f"\n\n=== Sensor Data=======")
+        print(f"device_id: {payload[0]}")
+        print(f"recorded_at: {recorded_at}")
+        print(f"carbon_monoxide_ppm: {payload[1]} ppm")
+        print(f"temperature_celcius: {payload[2]} °C")
+        print(f"pm1_ug_m3: {payload[3]} µg/m³")
+        print(f"pm2_5_ug_m3.5: {payload[4]} µg/m³")
+        print(f"pm4_ug_m3: {payload[5]} µg/m³")
+        print(f"pm10_ug_m3: {payload[6]} µg/m³")
 
     except Exception as e:
         print(f"\nProcessing error: {str(e)}\nRaw: {raw_message}")
