@@ -11,15 +11,27 @@ PREVIOUS_READINGS_FILE = "previous_readings.json"
 device_ids = ["device_1"]
 
 # Radio transmission configuration
-MORSE_CODE_DICT = { 
-    '0': '-----', '1': '.----', '2': '..---', '3': '...--',
-    '4': '....-', '5': '.....', '6': '-....', '7': '--...',
-    '8': '---..', '9': '----.', '.': '.-.-.-', '-': '-....-',
-    ' ': '/', '_': '..--.-'
+# Radio transmission configuration
+MORSE_CODE_DICT = {
+    # Optimized numbers (shorter codes)
+    '0': '-',    # Was '-----' (5)
+    '1': '.-',   # Was '.----' (5)
+    '2': '..-',  # Was '..---' (5)
+    '3': '...-', # Was '...--' (5)
+    '4': '....',
+    '5': '.....',
+    '6': '-....',
+    '7': '-...',
+    '8': '-..',
+    '9': '-.',
+    # Special characters
+    '.': '.-.-',  # Decimal point
+    ' ': '/',      # Space
+    '_': '..--'    # Device ID separator
 }
 
 FREQUENCY = 600
-dot_duration = 0.1
+dot_duration = 0.06  # Reduced from 0.1 (40% faster)
 
 def text_to_morse(text):
     return ' '.join(MORSE_CODE_DICT.get(i, '') for i in text)
