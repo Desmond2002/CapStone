@@ -14,7 +14,8 @@ device_ids = ["device_1"]
 MORSE_CODE_DICT = { 
     '0': '-----', '1': '.----', '2': '..---', '3': '...--',
     '4': '....-', '5': '.....', '6': '-....', '7': '--...',
-    '8': '---..', '9': '----.', '.': '.-.-.-', ' ': '/'
+    '8': '---..', '9': '----.', '.': '.-.-.-', '-': '-....-',
+    ' ': '/', '_': '..--.-'
 }
 
 FREQUENCY = 600
@@ -28,9 +29,6 @@ def generate_tone(duration):
     return 0.5 * np.sin(2 * np.pi * FREQUENCY * t)
 
 def play_morse(morse_code):
-    primer = '... / '
-    morse_code = primer + morse_code + ' /'
-    
     for symbol in morse_code:
         if symbol == '.':
             sd.play(generate_tone(DOT_DURATION), samplerate=44100)
@@ -117,6 +115,8 @@ def generate_reading(device_id, previous_readings, timestamp):
     }
 
     return {
+        "device_id": device_id,
+        "recorded_at": timestamp.replace(microsecond=0).isoformat(),
         "carbon_monoxide_ppm": float(co_level),
         "temperature_celcius": float(temperature),
         "pm1_ug_m3": float(pm1),
@@ -128,8 +128,10 @@ def generate_reading(device_id, previous_readings, timestamp):
 def handle_reading(timestamp, device_id, previous_readings):
     reading = generate_reading(device_id, previous_readings, timestamp)
     
-    # Create numeric message with fixed order
+    # Create transmission message
     values = [
+        reading['device_id'].split('_')[1],  # Device number
+        str(int(timestamp.timestamp())),     # Unix timestamp
         f"{reading['carbon_monoxide_ppm']:.2f}",
         f"{reading['temperature_celcius']:.2f}",
         f"{reading['pm1_ug_m3']:.2f}",
